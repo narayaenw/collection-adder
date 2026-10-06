@@ -138,7 +138,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         .split(/[,\n]/)
         .map((t) => t.trim())
         .filter(Boolean);
-      await enqueueJob(shop, "export-plan", { excludeTitles });
+      const activeOnly = form.get("activeOnly") === "on";
+      await enqueueJob(shop, "export-plan", { excludeTitles, activeOnly });
       return { message: "Export plánu spuštěn, po dokončení ho stáhnete v seznamu úloh." };
     }
     case "sort-all":
@@ -287,6 +288,7 @@ export default function Index() {
               label="Vynechat produkty, jejichž název obsahuje (více textů oddělte čárkou)"
               placeholder="např. BLANK"
             />
+            <s-checkbox name="activeOnly" value="on" label="Jen aktivní produkty" defaultChecked />
             <s-button type="submit" disabled={busy}>
               Spustit export
             </s-button>

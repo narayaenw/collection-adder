@@ -292,8 +292,8 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
   },
 
   /**
-   * Every collection-product pair the rules match directly for active products (including
-   * pairs already in place) as CSV, without changing anything. Subcollections and current
+   * Every collection-product pair the rules match directly (active products only unless
+   * activeOnly is false; including pairs already in place) as CSV, without changing anything. Subcollections and current
    * memberships are left out, which keeps the product export small and fast.
    */
   async "export-plan"(shop, payload, jobId) {
@@ -306,7 +306,7 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const match = createMatcher(collections, rules);
     const additions = new Map<string, string[]>();
     let productCount = 0;
-    await forEachBulkRow(admin, productsBulkQuery(rules, { withCollections: false, activeOnly: true }), (row) => {
+    await forEachBulkRow(admin, productsBulkQuery(rules, { withCollections: false, activeOnly: payload.activeOnly !== false }), (row) => {
       if (typeof row.id !== "string" || !row.id.includes("/Product/")) return;
       productCount++;
       const title = String(row.title ?? "").toLowerCase();
