@@ -3,7 +3,7 @@ client_id = ""
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products"
+scopes = "read_products,write_products"
 
 [webhooks]
 api_version = "2026-10"
@@ -18,6 +18,16 @@ api_version = "2026-10"
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  # Handled by: /app/routes/webhooks.products.create.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "products/create" ]
+  uri = "/webhooks/products/create"
+
+  # Handled by: /app/routes/webhooks.collections.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "collections/create", "collections/update", "collections/delete" ]
+  uri = "/webhooks/collections"
+
   # Mandatory compliance topic for public apps only
   # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
   # [[webhooks.subscriptions]]
@@ -31,31 +41,3 @@ api_version = "2026-10"
   # [[webhooks.subscriptions]]
   # uri = "/webhooks/shop/redact"
   # compliance_topics = ["shop/redact"]
-
-# Only receive Events when a variant's price changes and the product status is active.
-# See: https://shopify.dev/docs/apps/build/events-webhooks
-# [events]
-# api_version = "2026-10"
-
-#   [[events.subscription]]
-#   handle = "product-price-change"
-#   topic = "Product"
-#   actions = ["update"]
-#   triggers = ["product.variants.price", "product.variants.compareAtPrice"]
-#   uri = "/webhooks/products/update"
-#   query = """
-#   query product_variant_price_change($productId: ID!, $variantsId: ID!) {
-#     product(id: $productId) {
-#       id
-#       title
-#       status
-#     }
-#     productVariant(id: $variantsId) {
-#       id
-#       title
-#       price
-#       compareAtPrice
-#     }
-#   }
-#   """
-#   query_filter = "product.status:'ACTIVE'"
