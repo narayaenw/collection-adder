@@ -124,6 +124,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "evaluate-all":
       await enqueueJob(shop, "evaluate-all");
       return { message: "Vyhodnocení všech produktů spuštěno." };
+    case "export-plan":
+      await enqueueJob(shop, "export-plan");
+      return { message: "Export plánu spuštěn, po dokončení ho stáhnete v seznamu úloh." };
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -171,7 +174,20 @@ const JOB_LABELS: Record<string, string> = {
   "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
   "sort-all": "Řazení všech kolekcí",
+  "export-plan": "Export plánu",
 };
+
+/** Fetches an export (App Bridge adds the session token) and saves it as a file. */
+async function downloadExport(id: string) {
+  const response = await fetch(`/app/export/${id}`);
+  if (!response.ok) throw new Error(await response.text());
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `plan-${id}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 const STATUS_TONES: Record<string, "info" | "success" | "critical" | "neutral"> = {
   queued: "neutral",
@@ -242,6 +258,9 @@ export default function Index() {
           <s-button onClick={() => submit("sort-all")} disabled={busy}>
             Seřadit kolekce
           </s-button>
+          <s-button onClick={() => submit("export-plan")} disabled={busy}>
+            Export plánu (CSV)
+          </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit
           </s-button>
@@ -306,7 +325,19 @@ export default function Index() {
                       {STATUS_LABELS[job.status] ?? job.status}
                     </s-badge>
                   </s-table-cell>
-                  <s-table-cell>{job.message ?? ""}</s-table-cell>
+                  <s-table-cell>
+                    {job.message ?? ""}
+                    {job.type === "export-plan" && job.status === "done" && (
+                      <s-button
+                        variant="tertiary"
+                        onClick={() =>
+                          downloadExport(job.id).catch((error) => shopify.toast.show(String(error), { isError: true }))
+                        }
+                      >
+                        Stáhnout CSV
+                      </s-button>
+                    )}
+                  </s-table-cell>
                 </s-table-row>
               ))}
             </s-table-body>

@@ -59,3 +59,13 @@ model Job {
 
   @@index([shop, createdAt])
 }
+
+/** CSV produced by the export-plan job, downloaded from the app. */
+model ExportFile {
+  id        String   @id
+  shop      String
+  csv       String
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+}

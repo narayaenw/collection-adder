@@ -204,7 +204,13 @@ async function queueAdditions(shop: string, additions: Map<string, string[]>) {
   return products;
 }
 
-const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<string>> = {
+function csvCell(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+const numericId = (gid: string) => gid.split("/").pop()!;
+
+const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) => Promise<string>> = {
   async "sync-collections"(shop) {
     const admin = await adminFor(shop);
     const result = await syncAllCollections(admin, shop, await getRules(shop));
@@ -284,6 +290,26 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
       `Naplánováno ${products} přiřazení do ${additions.size} kolekcí.`;
   },
 
+  /** Planned additions for all rule collections as CSV, without changing anything. */
+  async "export-plan"(shop, _payload, jobId) {
+    const admin = await adminFor(shop);
+    await syncAllCollections(admin, shop, await getRules(shop));
+    const { additions, productCount } = await planAdditions(admin, shop);
+    const titles = new Map((await loadRuleCollections(shop)).map((c) => [c.id, c.title]));
+    const lines = ["collection_id,collection_title,product_ids"];
+    let products = 0;
+    for (const [collectionId, productIds] of additions) {
+      products += productIds.length;
+      lines.push([
+        numericId(collectionId),
+        csvCell(titles.get(collectionId) ?? ""),
+        csvCell(productIds.map(numericId).join(",")),
+      ].join(","));
+    }
+    await db.exportFile.create({ data: { id: jobId, shop, csv: lines.join("\n") } });
+    return `Prověřeno ${productCount} produktů. Export: ${additions.size} kolekcí, ${products} přiřazení.`;
+  },
+
   async "sort-collection"(shop, payload) {
     const admin = await adminFor(shop);
     return sortCollection(admin, await getRules(shop), payload.collectionId);
@@ -316,7 +342,7 @@ export async function runJob(jobId: string) {
   try {
     const handler = handlers[job.type as JobType];
     if (!handler) throw new Error(`Unknown job type ${job.type}`);
-    const message = await handler(job.shop, job.payload as Payload);
+    const message = await handler(job.shop, job.payload as Payload, job.id);
     await db.job.update({ where: { id: jobId }, data: { status: "done", message } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

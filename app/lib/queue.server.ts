@@ -10,7 +10,8 @@ export type JobType =
   | "evaluate-all"
   | "add-products"
   | "sort-collection"
-  | "sort-all";
+  | "sort-all"
+  | "export-plan";
 
 let tasksClient: CloudTasksClient | undefined;
 
