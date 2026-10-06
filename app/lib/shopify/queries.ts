@@ -74,7 +74,8 @@ export function collectionQuery(rules: RuleSet): string {
 }
 
 /** All products with the fields the rules need and their current collections. */
-export function productsBulkQuery(rules: RuleSet): string {
+/** All products with rule fields; withCollections adds each product's current collections. */
+export function productsBulkQuery(rules: RuleSet, { withCollections = true } = {}): string {
   return `{
   products {
     edges {
@@ -84,9 +85,7 @@ export function productsBulkQuery(rules: RuleSet): string {
         productType
         tags
         ${metafieldSelections(productMetafieldKeys(rules))}
-        collections {
-          edges { node { id } }
-        }
+        ${withCollections ? "collections { edges { node { id } } }" : ""}
       }
     }
   }

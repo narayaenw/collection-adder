@@ -291,12 +291,31 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       `Naplánováno ${products} přiřazení do ${additions.size} kolekcí.`;
   },
 
-  /** Planned additions for all rule collections as CSV, without changing anything. */
+  /**
+   * Every collection-product pair the rules match directly (including pairs already in place)
+   * as CSV, without changing anything. Subcollections and current memberships are left out,
+   * which keeps the product export small and fast.
+   */
   async "export-plan"(shop, _payload, jobId) {
     const admin = await adminFor(shop);
-    await syncAllCollections(admin, shop, await getRules(shop));
-    const { additions, productCount } = await planAdditions(admin, shop);
-    const titles = new Map((await loadRuleCollections(shop)).map((c) => [c.id, c.title]));
+    const rules = await getRules(shop);
+    await syncAllCollections(admin, shop, rules);
+    const collections = await loadRuleCollections(shop);
+    const match = createMatcher(collections, rules);
+    const additions = new Map<string, string[]>();
+    let productCount = 0;
+    await forEachBulkRow(admin, productsBulkQuery(rules, { withCollections: false }), (row) => {
+      if (typeof row.id !== "string" || !row.id.includes("/Product/")) return;
+      productCount++;
+      const product = toProductSnapshot(row, rules);
+      if (isVendorExcluded(product, rules)) return;
+      for (const collectionId of match(product)) {
+        const list = additions.get(collectionId);
+        if (list) list.push(product.id);
+        else additions.set(collectionId, [product.id]);
+      }
+    });
+    const titles = new Map(collections.map((c) => [c.id, c.title]));
     // A retried job starts its files over.
     await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
     const header = "collection_id,collection_title,product_id";
