@@ -74,13 +74,20 @@ export function collectionQuery(rules: RuleSet): string {
 }
 
 /** All products with the fields the rules need and their current collections. */
-/** All products with rule fields; withCollections adds each product's current collections. */
-export function productsBulkQuery(rules: RuleSet, { withCollections = true } = {}): string {
+/**
+ * All products with rule fields; withCollections adds each product's current collections and
+ * activeOnly leaves out draft and archived products.
+ */
+export function productsBulkQuery(
+  rules: RuleSet,
+  { withCollections = true, activeOnly = false } = {},
+): string {
   return `{
-  products {
+  products${activeOnly ? '(query: "status:active")' : ""} {
     edges {
       node {
         id
+        title
         vendor
         productType
         tags

@@ -292,11 +292,13 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
   },
 
   /**
-   * Every collection-product pair the rules match directly (including pairs already in place)
-   * as CSV, without changing anything. Subcollections and current memberships are left out,
-   * which keeps the product export small and fast.
+   * Every collection-product pair the rules match directly for active products (including
+   * pairs already in place) as CSV, without changing anything. Subcollections and current
+   * memberships are left out, which keeps the product export small and fast.
    */
-  async "export-plan"(shop, _payload, jobId) {
+  async "export-plan"(shop, payload, jobId) {
+    // Products whose title contains any of these texts (case-insensitive) are left out.
+    const excludeTitles = ((payload.excludeTitles ?? []) as string[]).map((t) => t.toLowerCase());
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     await syncAllCollections(admin, shop, rules);
@@ -304,9 +306,11 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const match = createMatcher(collections, rules);
     const additions = new Map<string, string[]>();
     let productCount = 0;
-    await forEachBulkRow(admin, productsBulkQuery(rules, { withCollections: false }), (row) => {
+    await forEachBulkRow(admin, productsBulkQuery(rules, { withCollections: false, activeOnly: true }), (row) => {
       if (typeof row.id !== "string" || !row.id.includes("/Product/")) return;
       productCount++;
+      const title = String(row.title ?? "").toLowerCase();
+      if (excludeTitles.some((text) => title.includes(text))) return;
       const product = toProductSnapshot(row, rules);
       if (isVendorExcluded(product, rules)) return;
       for (const collectionId of match(product)) {

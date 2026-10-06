@@ -133,9 +133,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "evaluate-all":
       await enqueueJob(shop, "evaluate-all");
       return { message: "Vyhodnocení všech produktů spuštěno." };
-    case "export-plan":
-      await enqueueJob(shop, "export-plan");
+    case "export-plan": {
+      const excludeTitles = String(form.get("excludeTitles") ?? "")
+        .split(/[,\n]/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      await enqueueJob(shop, "export-plan", { excludeTitles });
       return { message: "Export plánu spuštěn, po dokončení ho stáhnete v seznamu úloh." };
+    }
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -267,13 +272,26 @@ export default function Index() {
           <s-button onClick={() => submit("sort-all")} disabled={busy}>
             Seřadit kolekce
           </s-button>
-          <s-button onClick={() => submit("export-plan")} disabled={busy}>
-            Export plánu (CSV)
-          </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit
           </s-button>
         </s-stack>
+      </s-section>
+
+      <s-section heading="Export plánu (CSV)">
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="export-plan" />
+          <s-stack gap="base">
+            <s-text-field
+              name="excludeTitles"
+              label="Vynechat produkty, jejichž název obsahuje (více textů oddělte čárkou)"
+              placeholder="např. BLANK"
+            />
+            <s-button type="submit" disabled={busy}>
+              Spustit export
+            </s-button>
+          </s-stack>
+        </fetcher.Form>
       </s-section>
 
       <s-section heading="Vyhodnotit podle seznamu ID">
