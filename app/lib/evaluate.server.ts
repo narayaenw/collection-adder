@@ -2,6 +2,7 @@
 import { loadRuleCollections } from "./collections.server";
 import { buildAncestors, createMatcher, isVendorExcluded, withAncestors } from "./rules/engine";
 import { getRules } from "./settings.server";
+import { queueSorting } from "./sort.server";
 import { assertNoUserErrors, chunk, gql, type AdminClient } from "./shopify/api.server";
 import {
   PRODUCT_COLLECTIONS_QUERY,
@@ -47,5 +48,6 @@ export async function evaluateProduct(admin: AdminClient, shop: string, productI
     });
     assertNoUserErrors("productUpdate", result.productUpdate.userErrors);
   }
+  await queueSorting(shop, rules, toJoin);
   return { matched: matched.length, added: toJoin.length };
 }

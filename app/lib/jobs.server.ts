@@ -15,6 +15,7 @@ import {
 } from "./rules/engine";
 import type { RuleSet } from "./rules/types";
 import { getRules } from "./settings.server";
+import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
 import {
   COLLECTION_ADD_PRODUCTS,
@@ -120,6 +121,7 @@ async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet
   };
 
   const rest = new Set<string>();
+  const changed = new Set<string>();
   let checked = 0;
   let added = 0;
   for (const id of ids) {
@@ -149,13 +151,16 @@ async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet
       await addProducts(admin, target, toAdd);
       for (const p of toAdd) existing.add(p);
       added += toAdd.length;
+      if (toAdd.length > 0) changed.add(target);
     }
   }
+  await queueSorting(shop, rules, changed);
   return { checked, added, rest };
 }
 
 /** Queues additions planned from a full product export. */
 async function queueAdditions(shop: string, additions: Map<string, string[]>) {
+  const rules = await getRules(shop);
   let products = 0;
   for (const [collectionId, productIds] of additions) {
     for (const ids of chunk(productIds, 250)) {
@@ -163,6 +168,7 @@ async function queueAdditions(shop: string, additions: Map<string, string[]>) {
       products += ids.length;
     }
   }
+  await queueSorting(shop, rules, additions.keys());
   return products;
 }
 
@@ -203,6 +209,7 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     );
     const toAdd = additions.get(payload.collectionId) ?? [];
     await addProducts(admin, payload.collectionId, toAdd);
+    if (toAdd.length > 0) await queueSorting(shop, rules, [payload.collectionId]);
     return `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
   },
 
@@ -242,6 +249,19 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     const products = await queueAdditions(shop, additions);
     return `Prověřeno ${productCount} produktů a ${collectionCount} kolekcí. ` +
       `Naplánováno ${products} přiřazení do ${additions.size} kolekcí.`;
+  },
+
+  async "sort-collection"(shop, payload) {
+    const admin = await adminFor(shop);
+    return sortCollection(admin, await getRules(shop), payload.collectionId);
+  },
+
+  async "sort-all"(shop) {
+    const rules = await getRules(shop);
+    if (!rules.sorting.enabled) return "Řazení je vypnuté.";
+    const collections = await loadRuleCollections(shop);
+    for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
+    return `Naplánováno seřazení ${collections.length} kolekcí.`;
   },
 
   async "add-products"(shop, payload) {

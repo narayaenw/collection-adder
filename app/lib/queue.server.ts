@@ -8,7 +8,9 @@ export type JobType =
   | "evaluate-collection"
   | "evaluate-collections"
   | "evaluate-all"
-  | "add-products";
+  | "add-products"
+  | "sort-collection"
+  | "sort-all";
 
 let tasksClient: CloudTasksClient | undefined;
 

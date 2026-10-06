@@ -33,6 +33,9 @@ function parseIds(text: string, type: "Product" | "Collection") {
 
 const MAX_LIST_IDS = 5000;
 
+/** Jobs created in bulk, shown as a count instead of in the job list. */
+const BATCH_JOBS = ["add-products", "sort-collection"];
+
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
   const p = (payload ?? {}) as { productId?: unknown; collectionId?: unknown };
@@ -66,14 +69,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.ruleCollection.count({ where: { shop } }),
     db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } }),
     db.job.findMany({
-      where: { shop, type: { not: "add-products" } },
+      where: { shop, type: { notIn: BATCH_JOBS } },
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
     getRules(shop),
     db.job.groupBy({
       by: ["status"],
-      where: { shop, type: { not: "add-products" } },
+      where: { shop, type: { notIn: BATCH_JOBS } },
       _count: { _all: true },
     }),
   ]);
@@ -82,13 +85,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     admin as unknown as AdminClient,
     [...new Set(targets.filter((id): id is string => id !== null))],
   );
-  const pendingAdds = await db.job.count({
-    where: { shop, type: "add-products", status: { in: ["queued", "running"] } },
-  });
+  const [pendingAdds, pendingSorts] = await Promise.all(
+    BATCH_JOBS.map((type) =>
+      db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
+    ),
+  );
   return {
     collectionCount,
     lastSync: lastSync._max.syncedAt?.toISOString() ?? null,
     pendingAdds,
+    pendingSorts,
     filter: rules.collectionFilter,
     jobCounts: Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all])) as Record<string, number>,
     jobs: jobs.map((j, i) => ({
@@ -118,6 +124,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "evaluate-all":
       await enqueueJob(shop, "evaluate-all");
       return { message: "Vyhodnocení všech produktů spuštěno." };
+    case "sort-all":
+      await enqueueJob(shop, "sort-all");
+      return { message: "Řazení všech kolekcí spuštěno." };
     case "evaluate-collection":
       await enqueueJob(shop, "evaluate-collection", { collectionId: toGid("Collection", id) });
       return { message: "Vyhodnocení kolekce spuštěno." };
@@ -161,6 +170,7 @@ const JOB_LABELS: Record<string, string> = {
   "evaluate-collection": "Vyhodnocení kolekce",
   "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
+  "sort-all": "Řazení všech kolekcí",
 };
 
 const STATUS_TONES: Record<string, "info" | "success" | "critical" | "neutral"> = {
@@ -216,6 +226,9 @@ export default function Index() {
         {data.pendingAdds > 0 && (
           <s-paragraph>Čeká na zpracování {data.pendingAdds} dávek přiřazení.</s-paragraph>
         )}
+        {data.pendingSorts > 0 && (
+          <s-paragraph>Čeká na seřazení {data.pendingSorts} kolekcí.</s-paragraph>
+        )}
         <s-stack direction="inline" gap="base">
           <s-button onClick={() => submit("sync")} disabled={busy}>
             Synchronizovat kolekce
@@ -225,6 +238,9 @@ export default function Index() {
           </s-button>
           <s-button onClick={() => pick("collection")} disabled={busy}>
             Vyhodnotit kolekci
+          </s-button>
+          <s-button onClick={() => submit("sort-all")} disabled={busy}>
+            Seřadit kolekce
           </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit

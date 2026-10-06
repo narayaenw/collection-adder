@@ -184,3 +184,50 @@ export function toGid(type: "Product" | "Collection", id: string): string {
   if (!/^\d+$/.test(trimmed)) throw new Error(`Neplatné ID: ${id}`);
   return `gid://shopify/${type}/${trimmed}`;
 }
+
+function metafieldSelection(alias: string, full: string): string {
+  const dot = full.indexOf(".");
+  return `${alias}: metafield(namespace: ${JSON.stringify(full.slice(0, dot))}, key: ${JSON.stringify(full.slice(dot + 1))}) { value }`;
+}
+
+/** A collection page with what sorting needs: its car and each product's sort fields. */
+export function sortCollectionQuery(collectionKeys: string[], productKeys: string[]): string {
+  return `#graphql
+  query SortCollection($id: ID!, $after: String) {
+    collection(id: $id) {
+      id
+      sortOrder
+      ruleSet { appliedDisjunctively }
+      ${collectionKeys.map((key, i) => metafieldSelection(`c${i}`, key)).join("\n")}
+      products(first: 250, after: $after) {
+        nodes {
+          id
+          tags
+          ${metafieldSelections(productKeys)}
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+}
+
+export const COLLECTION_SET_MANUAL_SORT = `#graphql
+  mutation SetManualSort($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
+      collection { id sortOrder }
+      userErrors { field message }
+    }
+  }`;
+
+export const COLLECTION_REORDER_PRODUCTS = `#graphql
+  mutation ReorderProducts($id: ID!, $moves: [MoveInput!]!) {
+    collectionReorderProducts(id: $id, moves: $moves) {
+      job { id done }
+      userErrors { field message }
+    }
+  }`;
+
+export const JOB_STATUS = `#graphql
+  query JobStatus($id: ID!) {
+    job(id: $id) { id done }
+  }`;

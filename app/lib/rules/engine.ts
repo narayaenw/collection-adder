@@ -7,6 +7,7 @@ import {
   type FieldMap,
   type ProductSnapshot,
   type RuleSet,
+  type SortSettings,
 } from "./types";
 
 /** Splits a raw Shopify value into its items. List metafields arrive as JSON arrays. */
@@ -426,6 +427,8 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
     errors.push(`Neplatné metapole podkolekcí: "${subcollectionKey}"`);
   }
 
+  const sorting = parseSortSettings(obj.sorting, errors);
+
   const rawVendors = Array.isArray(obj.excludedVendors) ? obj.excludedVendors : [];
   const excludedVendors = [
     ...new Set(rawVendors.map((v) => String(v).trim()).filter((v) => v !== "")),
@@ -438,7 +441,26 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
       conditions,
       excludedVendors,
       subcollectionKey,
+      sorting,
     },
     errors,
+  };
+}
+
+function parseSortSettings(input: unknown, errors: string[]): SortSettings {
+  // Rules saved before sorting existed get the defaults.
+  if (input === undefined || input === null) return { ...DEFAULT_RULE_SET.sorting };
+  const obj = input as Record<string, unknown>;
+  const key = (name: "rankKey" | "productMatchKey" | "collectionMatchKey", label: string) => {
+    const value = String(obj[name] ?? "").trim();
+    if (!METAFIELD_KEY.test(value)) errors.push(`Neplatné metapole pro řazení (${label}): "${value}"`);
+    return value;
+  };
+  return {
+    enabled: obj.enabled === true || obj.enabled === "true" || obj.enabled === "on",
+    rankKey: key("rankKey", "rank"),
+    productMatchKey: key("productMatchKey", "auto na produktu"),
+    collectionMatchKey: key("collectionMatchKey", "auto na kolekci"),
+    tag: String(obj.tag ?? "").trim(),
   };
 }

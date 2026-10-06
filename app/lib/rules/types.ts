@@ -45,6 +45,24 @@ export interface RuleSet {
    * Empty string turns this off.
    */
   subcollectionKey: string;
+  sorting: SortSettings;
+}
+
+/**
+ * Order of products inside rule collections: products made for the collection's car first,
+ * then tagged products, then the rest; each group by rank from highest. Products without a
+ * rank end their group, ties keep their current order.
+ */
+export interface SortSettings {
+  enabled: boolean;
+  /** Product number metafield ("namespace.key") with the rank. */
+  rankKey: string;
+  /** Product list metafield with the cars the wheel is designed for. */
+  productMatchKey: string;
+  /** Collection metafield with the collection's car, compared with `productMatchKey`. */
+  collectionMatchKey: string;
+  /** Products with this tag follow the car group. Empty string turns the group off. */
+  tag: string;
 }
 
 /** Raw values keyed by field name, exactly as Shopify returns them (lists are JSON strings). */
@@ -94,4 +112,11 @@ export const DEFAULT_RULE_SET: RuleSet = {
   ],
   excludedVendors: ["AEZ", "Dotz", "Dezent"],
   subcollectionKey: "custom.subkolekce",
+  sorting: {
+    enabled: true,
+    rankKey: "custom.rank",
+    productMatchKey: "custom.auto",
+    collectionMatchKey: "ymm.znacka",
+    tag: "_TIP",
+  },
 };

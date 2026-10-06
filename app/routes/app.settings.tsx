@@ -37,6 +37,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     })),
     excludedVendors: String(form.get("excludedVendors") ?? "").split(/\r?\n|,/),
     subcollectionKey: String(form.get("subcollectionKey") ?? ""),
+    sorting: {
+      enabled: form.get("sortEnabled") === "on",
+      rankKey: form.get("sortRankKey"),
+      productMatchKey: form.get("sortProductMatchKey"),
+      collectionMatchKey: form.get("sortCollectionMatchKey"),
+      tag: form.get("sortTag"),
+    },
   };
 
   const { rules, errors } = parseRuleSet(input);
@@ -206,6 +213,48 @@ export default function Settings() {
             value={shown.subcollectionKey}
             placeholder="custom.subkolekce"
           />
+        </s-section>
+
+        <s-section heading="Řazení produktů v kolekcích">
+          <s-paragraph>
+            Nahoře produkty, jejichž seznam aut obsahuje auto kolekce, pak produkty s tagem, pak
+            ostatní. Uvnitř skupiny podle ranku od nejvyššího, produkty bez ranku na konci
+            skupiny. Řadí se po přidání produktů a každou noc.
+          </s-paragraph>
+          <s-stack direction="block" gap="base">
+            <s-checkbox
+              name="sortEnabled"
+              value="on"
+              label="Řadit produkty v kolekcích"
+              defaultChecked={shown.sorting.enabled}
+            />
+            <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+              <s-text-field
+                name="sortRankKey"
+                label="Rank produktu"
+                value={shown.sorting.rankKey}
+                placeholder="custom.rank"
+              />
+              <s-text-field
+                name="sortProductMatchKey"
+                label="Auta na produktu"
+                value={shown.sorting.productMatchKey}
+                placeholder="custom.auto"
+              />
+              <s-text-field
+                name="sortCollectionMatchKey"
+                label="Auto kolekce"
+                value={shown.sorting.collectionMatchKey}
+                placeholder="ymm.znacka"
+              />
+              <s-text-field
+                name="sortTag"
+                label="Tag druhé skupiny"
+                value={shown.sorting.tag}
+                placeholder="_TIP"
+              />
+            </s-grid>
+          </s-stack>
         </s-section>
 
         <s-section>
