@@ -77,6 +77,20 @@ const BULK_STATUS = `#graphql
  * or all products, which would take thousands of paginated requests otherwise.
  */
 export async function runBulkQuery(admin: AdminClient, query: string): Promise<any[]> {
+  const rows: any[] = [];
+  await forEachBulkRow(admin, query, (row) => rows.push(row));
+  return rows;
+}
+
+/**
+ * Runs a bulk query and passes each parsed JSONL row to onRow. The result is streamed line by
+ * line because a full product export can exceed the maximum string length.
+ */
+export async function forEachBulkRow(
+  admin: AdminClient,
+  query: string,
+  onRow: (row: any) => void,
+): Promise<void> {
   let operationId: string | undefined;
   for (let attempt = 1; attempt <= 60 && !operationId; attempt++) {
     const data = await gql(admin, RUN_BULK, { query });
@@ -107,14 +121,20 @@ export async function runBulkQuery(admin: AdminClient, query: string): Promise<a
     }
   }
 
-  if (!url) return []; // No rows matched.
+  if (!url) return; // No rows matched.
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`Bulk result download failed: ${response.status}`);
-  const text = await response.text();
-  return text
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line));
+  if (!response.ok || !response.body) throw new Error(`Bulk result download failed: ${response.status}`);
+  const decoder = new TextDecoder();
+  let pending = "";
+  const emit = (line: string) => {
+    if (line.trim() !== "") onRow(JSON.parse(line));
+  };
+  for await (const bytes of response.body as unknown as AsyncIterable<Uint8Array>) {
+    const lines = (pending + decoder.decode(bytes, { stream: true })).split("\n");
+    pending = lines.pop()!;
+    lines.forEach(emit);
+  }
+  emit(pending + decoder.decode());
 }
 
 export function chunk<T>(items: T[], size: number): T[][] {

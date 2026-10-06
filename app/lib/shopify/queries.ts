@@ -160,10 +160,17 @@ export const PRODUCT_JOIN_COLLECTIONS = `#graphql
   }`;
 
 /** Splits bulk product rows into products and each product's current collection ids. */
-export function parseProductRows(rows: any[], rules: RuleSet) {
+export function parseProductRows(rows: Iterable<any>, rules: RuleSet) {
+  const parser = productRowParser(rules);
+  for (const row of rows) parser.add(row);
+  return parser;
+}
+
+/** Collects products and their collection memberships from bulk rows fed one at a time. */
+export function productRowParser(rules: RuleSet) {
   const products: ProductSnapshot[] = [];
   const memberships = new Map<string, Set<string>>();
-  for (const row of rows) {
+  const add = (row: any) => {
     if (row.__parentId) {
       if (typeof row.id === "string" && row.id.includes("/Collection/")) {
         let set = memberships.get(row.__parentId);
@@ -173,8 +180,8 @@ export function parseProductRows(rows: any[], rules: RuleSet) {
     } else if (typeof row.id === "string" && row.id.includes("/Product/")) {
       products.push(toProductSnapshot(row, rules));
     }
-  }
-  return { products, memberships };
+  };
+  return { products, memberships, add };
 }
 
 /** Accepts a numeric id or a GID and returns the GID. */

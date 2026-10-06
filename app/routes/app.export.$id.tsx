@@ -11,7 +11,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return new Response(`\uFEFF${file.csv}`, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="plan-${file.createdAt.toISOString().slice(0, 10)}.csv"`,
+      "Content-Disposition": `attachment; filename="plan-${file.id}.csv"`,
     },
   });
 };

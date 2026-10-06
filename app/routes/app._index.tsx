@@ -85,6 +85,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     admin as unknown as AdminClient,
     [...new Set(targets.filter((id): id is string => id !== null))],
   );
+  const exportJobIds = jobs.filter((j) => j.type === "export-plan" && j.status === "done").map((j) => j.id);
+  const exportFiles = await db.exportFile.findMany({
+    where: { shop, OR: exportJobIds.map((id) => ({ id: { startsWith: `${id}-` } })) },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+  });
   const [pendingAdds, pendingSorts] = await Promise.all(
     BATCH_JOBS.map((type) =>
       db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
@@ -103,6 +109,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         ? { title: titles.get(targets[i]!) ?? targets[i]!.split("/").pop()!, url: adminUrl(targets[i]!) }
         : null,
       type: j.type,
+      exportFiles: exportJobIds.length
+        ? exportFiles.filter((f) => f.id.startsWith(`${j.id}-`)).map((f) => f.id)
+        : [],
       status: j.status,
       message: j.message,
       createdAt: j.createdAt.toISOString(),
@@ -327,16 +336,17 @@ export default function Index() {
                   </s-table-cell>
                   <s-table-cell>
                     {job.message ?? ""}
-                    {job.type === "export-plan" && job.status === "done" && (
+                    {job.exportFiles.map((fileId, i) => (
                       <s-button
+                        key={fileId}
                         variant="tertiary"
                         onClick={() =>
-                          downloadExport(job.id).catch((error) => shopify.toast.show(String(error), { isError: true }))
+                          downloadExport(fileId).catch((error) => shopify.toast.show(String(error), { isError: true }))
                         }
                       >
-                        Stáhnout CSV
+                        Soubor {i + 1}
                       </s-button>
-                    )}
+                    ))}
                   </s-table-cell>
                 </s-table-row>
               ))}

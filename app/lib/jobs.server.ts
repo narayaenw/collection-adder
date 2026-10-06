@@ -16,11 +16,11 @@ import {
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
-import { assertNoUserErrors, chunk, gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
+import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
 import {
   COLLECTION_ADD_PRODUCTS,
   COLLECTION_PRODUCT_IDS,
-  parseProductRows,
+  productRowParser,
   productSearchPageQuery,
   productsBulkQuery,
   toProductSnapshot,
@@ -59,10 +59,8 @@ async function addProducts(admin: AdminClient, collectionId: string, productIds:
 async function planAdditions(admin: AdminClient, shop: string, collectionIds?: Set<string>) {
   const rules = await getRules(shop);
   const collections = await loadRuleCollections(shop);
-  const { products, memberships } = parseProductRows(
-    await runBulkQuery(admin, productsBulkQuery(rules)),
-    rules,
-  );
+  const { products, memberships, add } = productRowParser(rules);
+  await forEachBulkRow(admin, productsBulkQuery(rules), add);
 
   // Matching runs over all collections because a subcollection's products reach its parents.
   const match = createMatcher(collections, rules);
@@ -208,6 +206,9 @@ function csvCell(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+/** Rows per export file, so each file stays a manageable size (about 30 MB). */
+const EXPORT_ROWS_PER_FILE = 500_000;
+
 const numericId = (gid: string) => gid.split("/").pop()!;
 
 const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) => Promise<string>> = {
@@ -296,15 +297,27 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     await syncAllCollections(admin, shop, await getRules(shop));
     const { additions, productCount } = await planAdditions(admin, shop);
     const titles = new Map((await loadRuleCollections(shop)).map((c) => [c.id, c.title]));
-    const lines = ["collection_id,collection_title,product_id"];
+    // A retried job starts its files over.
+    await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
+    const header = "collection_id,collection_title,product_id";
+    let lines: string[] = [];
+    let parts = 0;
+    const flush = async () => {
+      parts++;
+      await db.exportFile.create({ data: { id: `${jobId}-${parts}`, shop, csv: [header, ...lines].join("\n") } });
+      lines = [];
+    };
     let products = 0;
     for (const [collectionId, productIds] of additions) {
-      const collection = [numericId(collectionId), csvCell(titles.get(collectionId) ?? "")];
-      for (const productId of productIds) lines.push([...collection, numericId(productId)].join(","));
+      const collection = `${numericId(collectionId)},${csvCell(titles.get(collectionId) ?? "")},`;
+      for (const productId of productIds) {
+        lines.push(collection + numericId(productId));
+        if (lines.length >= EXPORT_ROWS_PER_FILE) await flush();
+      }
       products += productIds.length;
     }
-    await db.exportFile.create({ data: { id: jobId, shop, csv: lines.join("\n") } });
-    return `Prověřeno ${productCount} produktů. Export: ${additions.size} kolekcí, ${products} přiřazení.`;
+    if (lines.length > 0 || parts === 0) await flush();
+    return `Prověřeno ${productCount} produktů. Export: ${additions.size} kolekcí, ${products} přiřazení v ${parts} souborech.`;
   },
 
   async "sort-collection"(shop, payload) {
