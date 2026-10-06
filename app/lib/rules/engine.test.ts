@@ -8,6 +8,7 @@ import {
   matchingCollectionIds,
   parseRuleSet,
   productMetafieldKeys,
+  productSearchQuery,
   toList,
   toRange,
   withAncestors,
@@ -229,5 +230,37 @@ describe("buildAncestors", () => {
     delete old.subcollectionKey;
     expect(parseRuleSet(old).rules?.subcollectionKey).toBe("custom.subkolekce");
     expect(parseRuleSet({ ...old, subcollectionKey: "" }).rules?.subcollectionKey).toBe("");
+  });
+});
+
+describe("productSearchQuery", () => {
+  const rules = DEFAULT_RULE_SET;
+  const gle = {
+    id: "gid://shopify/Collection/724970733836",
+    fields: {
+      "custom.ymm_pcd": '["5x112"]',
+      "custom.ymm_size": '["21-22"]',
+      "custom.ymm_cb": "66.5",
+      "custom.ymm_inner_cb": "216.6",
+      "custom.ymm_outer_cb": "125.5",
+    },
+  };
+
+  it("expresses every condition and the vendor exclusions", () => {
+    expect(productSearchQuery(gle, rules)).toBe(
+      '(metafields.custom.pcd:"5x112") AND ' +
+        "((metafields.custom.size:>=21 AND metafields.custom.size:<=22)) AND " +
+        "metafields.custom.cb:>=66.5 AND metafields.custom.inner_mm:<216.6 AND " +
+        'metafields.custom.outer_mm:<125.5 AND -vendor:"AEZ" AND -vendor:"Dotz" AND -vendor:"Dezent"',
+    );
+  });
+
+  it("searches every spelling the rules treat as equal", () => {
+    const q = productSearchQuery({ ...gle, fields: { ...gle.fields, "custom.ymm_pcd": '["5x114,3"]' } }, rules);
+    expect(q).toContain('metafields.custom.pcd:"5x114,3" OR metafields.custom.pcd:"5x114.3"');
+  });
+
+  it("returns null when the collection lacks a value", () => {
+    expect(productSearchQuery({ ...gle, fields: { ...gle.fields, "custom.ymm_cb": null } }, rules)).toBeNull();
   });
 });

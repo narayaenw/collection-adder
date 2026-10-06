@@ -106,10 +106,37 @@ export function productQuery(rules: RuleSet): string {
   }`;
 }
 
+/** Products matching a search query, with the fields the rules need. */
+export function productSearchPageQuery(rules: RuleSet): string {
+  return `#graphql
+  query RuleProductSearch($query: String!, $after: String) {
+    products(first: 250, after: $after, query: $query) {
+      nodes {
+        id
+        vendor
+        productType
+        tags
+        ${metafieldSelections(productMetafieldKeys(rules))}
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+}
+
 export const PRODUCT_COLLECTIONS_QUERY = `#graphql
   query ProductCollections($id: ID!, $after: String) {
     product(id: $id) {
       collections(first: 250, after: $after) {
+        nodes { id }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+
+export const COLLECTION_PRODUCT_IDS = `#graphql
+  query CollectionProductIds($id: ID!, $after: String) {
+    collection(id: $id) {
+      products(first: 250, after: $after) {
         nodes { id }
         pageInfo { hasNextPage endCursor }
       }

@@ -4,12 +4,31 @@ import { unauthenticated } from "../shopify.server";
 import { syncAllCollections, syncCollection, loadRuleCollections } from "./collections.server";
 import { evaluateProduct } from "./evaluate.server";
 import { enqueueJob, type JobType } from "./queue.server";
-import { buildAncestors, createMatcher, isVendorExcluded, withAncestors } from "./rules/engine";
+import {
+  buildAncestors,
+  createMatcher,
+  isVendorExcluded,
+  productMatchesCollection,
+  productSearchQuery,
+  toList,
+  withAncestors,
+} from "./rules/engine";
+import type { RuleSet } from "./rules/types";
 import { getRules } from "./settings.server";
 import { assertNoUserErrors, chunk, gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
-import { COLLECTION_ADD_PRODUCTS, parseProductRows, productsBulkQuery } from "./shopify/queries";
+import {
+  COLLECTION_ADD_PRODUCTS,
+  COLLECTION_PRODUCT_IDS,
+  parseProductRows,
+  productSearchPageQuery,
+  productsBulkQuery,
+  toProductSnapshot,
+} from "./shopify/queries";
 
 type Payload = Record<string, any>;
+
+/** Up to this many collections are evaluated by search; more share one full export. */
+const SEARCH_LIMIT = 50;
 
 async function adminFor(shop: string): Promise<AdminClient> {
   const { admin } = await unauthenticated.admin(shop);
@@ -58,6 +77,86 @@ async function planAdditions(admin: AdminClient, shop: string, collectionIds?: S
   };
 }
 
+async function collectionProductIds(admin: AdminClient, id: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let after: string | null = null;
+  do {
+    const data: any = await gql(admin, COLLECTION_PRODUCT_IDS, { id, after });
+    const connection = data.collection?.products;
+    if (!connection) break;
+    for (const node of connection.nodes) ids.add(node.id);
+    after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (after);
+  return ids;
+}
+
+/**
+ * Fills collections without subcollections using Shopify product search: only products that
+ * can match the rules are read, so one collection takes seconds instead of a full export.
+ * New products also go to the collection's ancestors. Collections with subcollections need
+ * every product in the subtree, so they are returned for the full export instead.
+ */
+async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet, ids: Set<string>) {
+  const collections = await loadRuleCollections(shop);
+  const byId = new Map(collections.map((c) => [c.id, c]));
+  const ancestors = buildAncestors(collections, rules);
+  const hasChildren = (id: string) =>
+    !!rules.subcollectionKey && toList(byId.get(id)?.fields[rules.subcollectionKey]).length > 0;
+
+  const current = new Map<string, Set<string>>();
+  const currentOf = async (id: string) => {
+    let set = current.get(id);
+    if (!set) current.set(id, (set = await collectionProductIds(admin, id)));
+    return set;
+  };
+
+  const rest = new Set<string>();
+  let checked = 0;
+  let added = 0;
+  for (const id of ids) {
+    const collection = byId.get(id);
+    if (!collection || hasChildren(id)) {
+      rest.add(id);
+      continue;
+    }
+    const query = productSearchQuery(collection, rules);
+    if (query === null) continue;
+
+    const matched: string[] = [];
+    let after: string | null = null;
+    do {
+      const data: any = await gql(admin, productSearchPageQuery(rules), { query, after });
+      for (const node of data.products.nodes) {
+        checked++;
+        const product = toProductSnapshot(node, rules);
+        if (productMatchesCollection(product, collection, rules)) matched.push(product.id);
+      }
+      after = data.products.pageInfo.hasNextPage ? data.products.pageInfo.endCursor : null;
+    } while (after);
+
+    for (const target of [id, ...(ancestors.get(id) ?? [])]) {
+      const existing = await currentOf(target);
+      const toAdd = matched.filter((p) => !existing.has(p));
+      await addProducts(admin, target, toAdd);
+      for (const p of toAdd) existing.add(p);
+      added += toAdd.length;
+    }
+  }
+  return { checked, added, rest };
+}
+
+/** Queues additions planned from a full product export. */
+async function queueAdditions(shop: string, additions: Map<string, string[]>) {
+  let products = 0;
+  for (const [collectionId, productIds] of additions) {
+    for (const ids of chunk(productIds, 250)) {
+      await enqueueJob(shop, "add-products", { collectionId, productIds: ids });
+      products += ids.length;
+    }
+  }
+  return products;
+}
+
 const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<string>> = {
   async "sync-collections"(shop) {
     const admin = await adminFor(shop);
@@ -84,6 +183,10 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     const rules = await getRules(shop);
     const { synced } = await syncCollection(admin, shop, rules, payload.collectionId);
     if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
+    const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
+    if (fast.rest.size === 0) {
+      return `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+    }
     const { additions, productCount } = await planAdditions(
       admin,
       shop,
@@ -104,30 +207,30 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     }
     const skipped = (payload.collectionIds as string[]).length - ids.size;
     if (ids.size === 0) return "Žádná kolekce nemá pravidla (nebo jsou to smart kolekce).";
-    const { additions, productCount } = await planAdditions(admin, shop, ids);
-    let products = 0;
-    for (const [collectionId, productIds] of additions) {
-      for (const chunkIds of chunk(productIds, 250)) {
-        await enqueueJob(shop, "add-products", { collectionId, productIds: chunkIds });
-        products += chunkIds.length;
+    const skippedText = skipped ? ` (${skipped} přeskočeno, nemají pravidla)` : "";
+
+    // Search per collection pays off for a few collections; many at once share one export.
+    if (ids.size <= SEARCH_LIMIT) {
+      const fast = await evaluateBySearch(admin, shop, rules, ids);
+      let message = `${ids.size - fast.rest.size} kolekcí: prověřeno ${fast.checked} produktů, ` +
+        `přidáno ${fast.added}${skippedText}.`;
+      if (fast.rest.size > 0) {
+        const { additions } = await planAdditions(admin, shop, fast.rest);
+        message += ` ${fast.rest.size} kolekcí s podkolekcemi: naplánováno ` +
+          `${await queueAdditions(shop, additions)} přiřazení.`;
       }
+      return message;
     }
-    return `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí` +
-      (skipped ? ` (${skipped} přeskočeno, nemají pravidla)` : "") +
-      `. Naplánováno ${products} přiřazení.`;
+    const { additions, productCount } = await planAdditions(admin, shop, ids);
+    return `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedText}` +
+      `. Naplánováno ${await queueAdditions(shop, additions)} přiřazení.`;
   },
 
   async "evaluate-all"(shop) {
     const admin = await adminFor(shop);
     await syncAllCollections(admin, shop, await getRules(shop));
     const { additions, productCount, collectionCount } = await planAdditions(admin, shop);
-    let products = 0;
-    for (const [collectionId, productIds] of additions) {
-      for (const ids of chunk(productIds, 250)) {
-        await enqueueJob(shop, "add-products", { collectionId, productIds: ids });
-        products += ids.length;
-      }
-    }
+    const products = await queueAdditions(shop, additions);
     return `Prověřeno ${productCount} produktů a ${collectionCount} kolekcí. ` +
       `Naplánováno ${products} přiřazení do ${additions.size} kolekcí.`;
   },

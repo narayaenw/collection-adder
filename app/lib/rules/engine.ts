@@ -302,6 +302,70 @@ export function buildAncestors(collections: CollectionSnapshot[], rules: RuleSet
   return ancestors;
 }
 
+/** Shopify search field for a product field: built-ins by name, metafields as metafields.ns.key. */
+function searchField(productField: string): string {
+  if (productField === "tags") return "tag";
+  if (PRODUCT_BUILTIN_FIELDS.includes(productField)) return productField;
+  return `metafields.${productField}`;
+}
+
+function quote(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Spellings the rules treat as equal ("5x114,3" = "5x114.3"), since search does not. */
+function spellings(value: string): string[] {
+  const base = value.trim().replace(/×/g, "x");
+  return [...new Set([value.trim(), base, base.replace(/,/g, "."), base.replace(/\./g, ",")])];
+}
+
+/**
+ * Shopify product search query that returns at least every product matching the collection
+ * under the rules (results are still checked by the rules). Conditions it cannot express are
+ * left out, which only widens the result. Returns null when nothing can match because the
+ * collection lacks a value a condition needs.
+ */
+export function productSearchQuery(collection: CollectionSnapshot, rules: RuleSet): string | null {
+  const parts: string[] = [];
+  for (const condition of rules.conditions) {
+    const items = toList(
+      condition.source.type === "collection"
+        ? collection.fields[condition.source.key]
+        : condition.source.value,
+    );
+    if (items.length === 0) return null;
+    const field = searchField(condition.productField);
+    const numbers = items.map(toNumber).filter((n): n is number => n !== null);
+
+    switch (condition.operator) {
+      case "eq":
+        parts.push(`(${items.flatMap(spellings).map((v) => `${field}:${quote(v)}`).join(" OR ")})`);
+        break;
+      case "lt":
+      case "lte":
+        if (numbers.length === 0) return null;
+        parts.push(`${field}:${condition.operator === "lt" ? "<" : "<="}${Math.max(...numbers)}`);
+        break;
+      case "gt":
+      case "gte":
+        if (numbers.length === 0) return null;
+        parts.push(`${field}:${condition.operator === "gt" ? ">" : ">="}${Math.min(...numbers)}`);
+        break;
+      case "in_range": {
+        const ranges = items.map(toRange).filter((r): r is [number, number] => r !== null);
+        if (ranges.length === 0) return null;
+        parts.push(`(${ranges.map(([a, b]) => `(${field}:>=${a} AND ${field}:<=${b})`).join(" OR ")})`);
+        break;
+      }
+      default:
+        // "neq" is left to the rules.
+        break;
+    }
+  }
+  for (const vendor of rules.excludedVendors) parts.push(`-vendor:${quote(vendor)}`);
+  return parts.join(" AND ");
+}
+
 /** The given collections plus all their ancestors. */
 export function withAncestors(ids: Iterable<string>, ancestors: Map<string, string[]>): Set<string> {
   const result = new Set<string>();
