@@ -137,7 +137,7 @@ export const COLLECTION_PRODUCT_IDS = `#graphql
   query CollectionProductIds($id: ID!, $after: String) {
     collection(id: $id) {
       products(first: 250, after: $after) {
-        nodes { id }
+        nodes { id vendor }
         pageInfo { hasNextPage endCursor }
       }
     }

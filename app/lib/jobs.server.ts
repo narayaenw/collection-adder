@@ -13,7 +13,7 @@ import {
   toList,
   withAncestors,
 } from "./rules/engine";
-import type { RuleSet } from "./rules/types";
+import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
@@ -87,55 +87,65 @@ async function planAdditions(admin: AdminClient, shop: string, collectionIds?: S
   };
 }
 
-async function collectionProductIds(admin: AdminClient, id: string): Promise<Set<string>> {
-  const ids = new Set<string>();
+/** Current products of a collection, with vendor so excluded vendors can be skipped. */
+async function collectionProducts(admin: AdminClient, id: string): Promise<ProductSnapshot[]> {
+  const products: ProductSnapshot[] = [];
   let after: string | null = null;
   do {
     const data: any = await gql(admin, COLLECTION_PRODUCT_IDS, { id, after });
     const connection = data.collection?.products;
     if (!connection) break;
-    for (const node of connection.nodes) ids.add(node.id);
+    for (const node of connection.nodes) products.push({ id: node.id, fields: { vendor: node.vendor ?? null } });
     after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
   } while (after);
-  return ids;
+  return products;
+}
+
+/** Ids of all collections below the given one in the category tree (any depth). */
+function descendantsOf(id: string, byId: Map<string, CollectionSnapshot>, rules: RuleSet): string[] {
+  if (!rules.subcollectionKey) return [];
+  const seen = new Set<string>([id]);
+  const stack = [id];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const child of toList(byId.get(current)?.fields[rules.subcollectionKey])) {
+      if (seen.has(child)) continue;
+      seen.add(child);
+      stack.push(child);
+    }
+  }
+  seen.delete(id);
+  return [...seen];
 }
 
 /**
- * Fills collections without subcollections using Shopify product search: only products that
- * can match the rules are read, so one collection takes seconds instead of a full export.
- * New products also go to the collection's ancestors. Collections with subcollections need
- * every product in the subtree, so they are returned for the full export instead.
+ * Fills collections using Shopify product search: only products that can match the rules are
+ * read, so one collection takes seconds instead of a full export. A collection with
+ * subcollections also gets every product its subcollections hold or match. New products also
+ * go to the collection's ancestors. Collections missing from the app's overview are returned
+ * for the full export instead.
  */
 async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet, ids: Set<string>) {
   const collections = await loadRuleCollections(shop);
   const byId = new Map(collections.map((c) => [c.id, c]));
   const ancestors = buildAncestors(collections, rules);
-  const hasChildren = (id: string) =>
-    !!rules.subcollectionKey && toList(byId.get(id)?.fields[rules.subcollectionKey]).length > 0;
 
   const current = new Map<string, Set<string>>();
   const currentOf = async (id: string) => {
     let set = current.get(id);
-    if (!set) current.set(id, (set = await collectionProductIds(admin, id)));
+    if (!set) current.set(id, (set = new Set((await collectionProducts(admin, id)).map((p) => p.id))));
     return set;
   };
 
-  const rest = new Set<string>();
-  const changed = new Set<string>();
   let checked = 0;
-  let added = 0;
-  for (const id of ids) {
-    const collection = byId.get(id);
-    if (!collection || hasChildren(id)) {
-      rest.add(id);
-      continue;
-    }
-    const query = productSearchQuery(collection, rules);
-    if (query === null) continue;
-
+  const matchedOf = new Map<string, string[]>();
+  const searchMatches = async (collection: CollectionSnapshot) => {
+    const cached = matchedOf.get(collection.id);
+    if (cached) return cached;
     const matched: string[] = [];
+    const query = productSearchQuery(collection, rules);
     let after: string | null = null;
-    do {
+    while (query !== null) {
       const data: any = await gql(admin, productSearchPageQuery(rules), { query, after });
       for (const node of data.products.nodes) {
         checked++;
@@ -143,11 +153,33 @@ async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet
         if (productMatchesCollection(product, collection, rules)) matched.push(product.id);
       }
       after = data.products.pageInfo.hasNextPage ? data.products.pageInfo.endCursor : null;
-    } while (after);
+      if (!after) break;
+    }
+    matchedOf.set(collection.id, matched);
+    return matched;
+  };
+
+  const rest = new Set<string>();
+  const changed = new Set<string>();
+  let added = 0;
+  for (const id of ids) {
+    const collection = byId.get(id);
+    if (!collection) {
+      rest.add(id);
+      continue;
+    }
+    const matched = new Set(await searchMatches(collection));
+    for (const childId of descendantsOf(id, byId, rules)) {
+      const child = byId.get(childId);
+      if (child) for (const p of await searchMatches(child)) matched.add(p);
+      for (const product of await collectionProducts(admin, childId)) {
+        if (!isVendorExcluded(product, rules)) matched.add(product.id);
+      }
+    }
 
     for (const target of [id, ...(ancestors.get(id) ?? [])]) {
       const existing = await currentOf(target);
-      const toAdd = matched.filter((p) => !existing.has(p));
+      const toAdd = [...matched].filter((p) => !existing.has(p));
       await addProducts(admin, target, toAdd);
       for (const p of toAdd) existing.add(p);
       added += toAdd.length;
