@@ -39,6 +39,12 @@ export interface RuleSet {
   conditions: Condition[];
   /** Products from these vendors are never added. Case-insensitive. */
   excludedVendors: string[];
+  /**
+   * Collection reference list metafield ("namespace.key") on a parent collection naming its
+   * subcollections. Products in a subcollection are also added to all its ancestors.
+   * Empty string turns this off.
+   */
+  subcollectionKey: string;
 }
 
 /** Raw values keyed by field name, exactly as Shopify returns them (lists are JSON strings). */
@@ -58,7 +64,7 @@ export interface CollectionSnapshot {
 export const PRODUCT_BUILTIN_FIELDS = ["vendor", "product_type", "tags"];
 
 export const DEFAULT_RULE_SET: RuleSet = {
-  collectionFilter: { key: "custom.ucel", value: "YMM_Cloudflare" },
+  collectionFilter: { key: "custom.ucel", value: "YMM Cloudflare" },
   conditions: [
     {
       productField: "custom.pcd",
@@ -87,4 +93,5 @@ export const DEFAULT_RULE_SET: RuleSet = {
     },
   ],
   excludedVendors: ["AEZ", "Dotz", "Dezent"],
+  subcollectionKey: "custom.subkolekce",
 };

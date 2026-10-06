@@ -1,4 +1,5 @@
 import {
+  DEFAULT_RULE_SET,
   OPERATORS,
   PRODUCT_BUILTIN_FIELDS,
   type CollectionSnapshot,
@@ -266,7 +267,49 @@ export function collectionMetafieldKeys(rules: RuleSet): string[] {
   for (const c of rules.conditions) {
     if (c.source.type === "collection") keys.add(c.source.key);
   }
+  if (rules.subcollectionKey) keys.add(rules.subcollectionKey);
   return [...keys];
+}
+
+/**
+ * Maps each collection to all collections above it in the category tree, read from the
+ * subcollection metafield on parent collections. Cycles are ignored.
+ */
+export function buildAncestors(collections: CollectionSnapshot[], rules: RuleSet): Map<string, string[]> {
+  const parents = new Map<string, string[]>();
+  if (!rules.subcollectionKey) return parents;
+  for (const parent of collections) {
+    for (const child of toList(parent.fields[rules.subcollectionKey])) {
+      if (child === parent.id) continue;
+      const list = parents.get(child);
+      if (list) list.push(parent.id);
+      else parents.set(child, [parent.id]);
+    }
+  }
+
+  const ancestors = new Map<string, string[]>();
+  for (const start of parents.keys()) {
+    const seen = new Set<string>();
+    const stack = [...(parents.get(start) ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === start || seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(parents.get(id) ?? []));
+    }
+    ancestors.set(start, [...seen]);
+  }
+  return ancestors;
+}
+
+/** The given collections plus all their ancestors. */
+export function withAncestors(ids: Iterable<string>, ancestors: Map<string, string[]>): Set<string> {
+  const result = new Set<string>();
+  for (const id of ids) {
+    result.add(id);
+    for (const ancestor of ancestors.get(id) ?? []) result.add(ancestor);
+  }
+  return result;
 }
 
 const METAFIELD_KEY = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
@@ -310,6 +353,15 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
   });
   if (conditions.length === 0) errors.push("Musí existovat alespoň jedna podmínka.");
 
+  // Rules saved before this setting existed get the default.
+  const subcollectionKey =
+    obj.subcollectionKey === undefined
+      ? DEFAULT_RULE_SET.subcollectionKey
+      : String(obj.subcollectionKey ?? "").trim();
+  if (subcollectionKey && !METAFIELD_KEY.test(subcollectionKey)) {
+    errors.push(`Neplatné metapole podkolekcí: "${subcollectionKey}"`);
+  }
+
   const rawVendors = Array.isArray(obj.excludedVendors) ? obj.excludedVendors : [];
   const excludedVendors = [
     ...new Set(rawVendors.map((v) => String(v).trim()).filter((v) => v !== "")),
@@ -317,7 +369,12 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
 
   if (errors.length > 0) return { errors };
   return {
-    rules: { collectionFilter: { key: filterKey, value: filterValue }, conditions, excludedVendors },
+    rules: {
+      collectionFilter: { key: filterKey, value: filterValue },
+      conditions,
+      excludedVendors,
+      subcollectionKey,
+    },
     errors,
   };
 }

@@ -4,7 +4,7 @@ import { unauthenticated } from "../shopify.server";
 import { syncAllCollections, syncCollection, loadRuleCollections } from "./collections.server";
 import { evaluateProduct } from "./evaluate.server";
 import { enqueueJob, type JobType } from "./queue.server";
-import { createMatcher } from "./rules/engine";
+import { buildAncestors, createMatcher, isVendorExcluded, withAncestors } from "./rules/engine";
 import { getRules } from "./settings.server";
 import { assertNoUserErrors, chunk, gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
 import { COLLECTION_ADD_PRODUCTS, parseProductRows, productsBulkQuery } from "./shopify/queries";
@@ -23,28 +23,39 @@ async function addProducts(admin: AdminClient, collectionId: string, productIds:
   }
 }
 
-/** Reads all products once and returns, per collection, the products that should be added. */
+/**
+ * Reads all products once and returns, per collection, the products that should be added:
+ * those matching its rules and those in any of its subcollections (at any depth).
+ */
 async function planAdditions(admin: AdminClient, shop: string, collectionIds?: Set<string>) {
   const rules = await getRules(shop);
-  let collections = await loadRuleCollections(shop);
-  if (collectionIds) collections = collections.filter((c) => collectionIds.has(c.id));
+  const collections = await loadRuleCollections(shop);
   const { products, memberships } = parseProductRows(
     await runBulkQuery(admin, productsBulkQuery(rules)),
     rules,
   );
 
+  // Matching runs over all collections because a subcollection's products reach its parents.
   const match = createMatcher(collections, rules);
+  const ancestors = buildAncestors(collections, rules);
   const additions = new Map<string, string[]>();
   for (const product of products) {
+    // Excluded vendors are never added, not even through a subcollection.
+    if (isVendorExcluded(product, rules)) continue;
     const current = memberships.get(product.id);
-    for (const collectionId of match(product)) {
+    for (const collectionId of withAncestors([...match(product), ...(current ?? [])], ancestors)) {
       if (current?.has(collectionId)) continue;
+      if (collectionIds && !collectionIds.has(collectionId)) continue;
       const list = additions.get(collectionId);
       if (list) list.push(product.id);
       else additions.set(collectionId, [product.id]);
     }
   }
-  return { additions, productCount: products.length, collectionCount: collections.length };
+  return {
+    additions,
+    productCount: products.length,
+    collectionCount: collectionIds?.size ?? collections.length,
+  };
 }
 
 const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<string>> = {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAncestors,
   collectionMetafieldKeys,
   createMatcher,
   evaluateCondition,
@@ -9,6 +10,7 @@ import {
   productMetafieldKeys,
   toList,
   toRange,
+  withAncestors,
 } from "./engine";
 import { DEFAULT_RULE_SET, type CollectionSnapshot, type ProductSnapshot } from "./types";
 
@@ -17,7 +19,7 @@ const abarth: CollectionSnapshot = {
   id: "gid://shopify/Collection/724502380812",
   title: "ABARTH 595C 312 [2008-2016] 1.4T Abarth I4 103 kW",
   fields: {
-    "custom.ucel": "YMM_Cloudflare",
+    "custom.ucel": "YMM Cloudflare",
     "custom.ymm_size": '["16-17"]',
     "custom.ymm_cb": "58.1",
     "custom.ymm_pcd": '["4x98"]',
@@ -193,4 +195,39 @@ describe("createMatcher", () => {
     expect(total).toBeGreaterThan(0);
     expect(Date.now() - started).toBeLessThan(10000);
   }, 30000);
+});
+
+describe("buildAncestors", () => {
+  const rules = DEFAULT_RULE_SET;
+  const node = (id: string, children: string[] = []) => ({
+    id,
+    fields: { "custom.subkolekce": JSON.stringify(children) },
+  });
+
+  it("collects parents at every level", () => {
+    const tree = [node("make", ["model"]), node("model", ["year1", "year2"]), node("year1"), node("year2")];
+    const ancestors = buildAncestors(tree, rules);
+    expect(ancestors.get("year1")?.sort()).toEqual(["make", "model"]);
+    expect(ancestors.get("model")).toEqual(["make"]);
+    expect(ancestors.has("make")).toBe(false);
+    expect([...withAncestors(["year2"], ancestors)].sort()).toEqual(["make", "model", "year2"]);
+  });
+
+  it("survives cycles and self references", () => {
+    const ancestors = buildAncestors([node("a", ["b", "a"]), node("b", ["a"])], rules);
+    expect(ancestors.get("a")).toEqual(["b"]);
+    expect(ancestors.get("b")).toEqual(["a"]);
+  });
+
+  it("is off when no metafield is set", () => {
+    const ancestors = buildAncestors([node("a", ["b"])], { ...rules, subcollectionKey: "" });
+    expect(ancestors.size).toBe(0);
+  });
+
+  it("gives old saved rules the default key", () => {
+    const old: Partial<typeof DEFAULT_RULE_SET> = { ...DEFAULT_RULE_SET };
+    delete old.subcollectionKey;
+    expect(parseRuleSet(old).rules?.subcollectionKey).toBe("custom.subkolekce");
+    expect(parseRuleSet({ ...old, subcollectionKey: "" }).rules?.subcollectionKey).toBe("");
+  });
 });
