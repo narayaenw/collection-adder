@@ -40,6 +40,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     sorting: {
       enabled: form.get("sortEnabled") === "on",
       rankKey: form.get("sortRankKey"),
+      productSizeKey: form.get("sortProductSizeKey"),
+      collectionSizeKey: form.get("sortCollectionSizeKey"),
       productMatchKey: form.get("sortProductMatchKey"),
       collectionMatchKey: form.get("sortCollectionMatchKey"),
       tag: form.get("sortTag"),
@@ -217,8 +219,8 @@ export default function Settings() {
 
         <s-section heading="Řazení produktů v kolekcích">
           <s-paragraph>
-            Nahoře produkty, jejichž seznam aut obsahuje auto kolekce, pak produkty s tagem, pak
-            ostatní. Uvnitř skupiny podle ranku od nejvyššího, produkty bez ranku na konci
+            Nahoře produkty s původním rozměrem auta (nejdřív ty, které jsou i pro jeho auto), pak
+            produkty, jejichž seznam aut obsahuje auto kolekce, pak produkty s tagem, pak ostatní. Uvnitř skupiny podle ranku od nejvyššího, produkty bez ranku na konci
             skupiny. Řadí se po přidání produktů a každou noc.
           </s-paragraph>
           <s-stack direction="block" gap="base">
@@ -234,6 +236,18 @@ export default function Settings() {
                 label="Rank produktu"
                 value={shown.sorting.rankKey}
                 placeholder="custom.rank"
+              />
+              <s-text-field
+                name="sortProductSizeKey"
+                label="Rozměr produktu"
+                value={shown.sorting.productSizeKey}
+                placeholder="custom.size"
+              />
+              <s-text-field
+                name="sortCollectionSizeKey"
+                label="Původní rozměr kolekce"
+                value={shown.sorting.collectionSizeKey}
+                placeholder="custom.original_size"
               />
               <s-text-field
                 name="sortProductMatchKey"

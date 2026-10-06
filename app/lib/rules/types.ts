@@ -49,14 +49,19 @@ export interface RuleSet {
 }
 
 /**
- * Order of products inside rule collections: products made for the collection's car first,
- * then tagged products, then the rest; each group by rank from highest. Products without a
+ * Order of products inside rule collections: products with the collection's original size first
+ * (those also made for its car ahead), then products made for the car, then tagged products,
+ * then the rest; each group by rank from highest. Products without a
  * rank end their group, ties keep their current order.
  */
 export interface SortSettings {
   enabled: boolean;
   /** Product number metafield ("namespace.key") with the rank. */
   rankKey: string;
+  /** Product metafield with the wheel size, compared with `collectionSizeKey`. */
+  productSizeKey: string;
+  /** Collection metafield with the car's original wheel size. */
+  collectionSizeKey: string;
   /** Product list metafield with the cars the wheel is designed for. */
   productMatchKey: string;
   /** Collection metafield with the collection's car, compared with `productMatchKey`. */
@@ -115,6 +120,8 @@ export const DEFAULT_RULE_SET: RuleSet = {
   sorting: {
     enabled: true,
     rankKey: "custom.rank",
+    productSizeKey: "custom.size",
+    collectionSizeKey: "custom.original_size",
     productMatchKey: "custom.auto",
     collectionMatchKey: "ymm.znacka",
     tag: "_TIP",

@@ -4,10 +4,17 @@ import { DEFAULT_RULE_SET } from "./types";
 
 const settings = DEFAULT_RULE_SET.sorting;
 
-const product = (id: string, rank: string | null, cars: string[] = [], tags: string[] = []): SortProduct => ({
+const product = (
+  id: string,
+  rank: string | null,
+  cars: string[] = [],
+  tags: string[] = [],
+  size: string | null = null,
+): SortProduct => ({
   id,
   fields: {
     "custom.rank": rank,
+    "custom.size": size,
     "custom.auto": cars.length ? JSON.stringify(cars) : null,
     tags: JSON.stringify(tags),
   },
@@ -35,6 +42,19 @@ describe("desiredOrder", () => {
       product("f", "2", ["Škoda"], ["_TIP"]),
     ];
     expect(desiredOrder(products, car("Škoda"), settings)).toEqual(["d", "f", "b", "c", "e", "a"]);
+  });
+
+  it("puts the original size first, with the car ahead inside it", () => {
+    const products = [
+      product("a", "9", ["Škoda"]),
+      product("b", "1", [], [], "17"),
+      product("c", "5", ["Škoda"], [], "17"),
+      product("d", "8", [], [], "16"),
+      product("e", "3", [], ["_TIP"], "17.0"),
+    ];
+    expect(desiredOrder(products, { "ymm.znacka": "Škoda", "custom.original_size": "17" }, settings)).toEqual(
+      ["c", "e", "b", "a", "d"],
+    );
   });
 
   it("matches the car case-insensitively", () => {

@@ -29,8 +29,8 @@ export async function sortCollection(admin: AdminClient, rules: RuleSet, collect
   const settings = rules.sorting;
   if (!settings.enabled) return "Řazení je vypnuté.";
 
-  const collectionKeys = [settings.collectionMatchKey];
-  const productKeys = [settings.rankKey, settings.productMatchKey];
+  const collectionKeys = [settings.collectionSizeKey, settings.collectionMatchKey];
+  const productKeys = [settings.rankKey, settings.productSizeKey, settings.productMatchKey];
   const query = sortCollectionQuery(collectionKeys, productKeys);
 
   let collection: any = null;

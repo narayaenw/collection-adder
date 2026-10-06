@@ -12,14 +12,24 @@ export interface Move {
   newPosition: string;
 }
 
-/** 0 = made for the collection's car, 1 = tagged, 2 = the rest. */
-export function sortGroup(product: SortProduct, collectionCars: Set<string>, settings: SortSettings): number {
-  if (toList(product.fields[settings.productMatchKey]).some((car) => collectionCars.has(equalityKey(car)))) {
-    return 0;
-  }
+const hasAny = (raw: string | null | undefined, keys: Set<string>) =>
+  toList(raw).some((value) => keys.has(equalityKey(value)));
+
+/**
+ * 0 = original size and car, 1 = original size, 2 = made for the car, 3 = tagged, 4 = the rest.
+ */
+export function sortGroup(
+  product: SortProduct,
+  collection: { sizes: Set<string>; cars: Set<string> },
+  settings: SortSettings,
+): number {
+  const size = hasAny(product.fields[settings.productSizeKey], collection.sizes);
+  const car = hasAny(product.fields[settings.productMatchKey], collection.cars);
+  if (size) return car ? 0 : 1;
+  if (car) return 2;
   const tag = normalizeText(settings.tag);
-  if (tag && toList(product.fields.tags).some((t) => normalizeText(t) === tag)) return 1;
-  return 2;
+  if (tag && toList(product.fields.tags).some((t) => normalizeText(t) === tag)) return 3;
+  return 4;
 }
 
 function rankOf(product: SortProduct, settings: SortSettings): number | null {
@@ -36,12 +46,16 @@ export function desiredOrder(
   collection: FieldMap,
   settings: SortSettings,
 ): string[] {
-  const cars = new Set(toList(collection[settings.collectionMatchKey]).map(equalityKey));
+  const keys = (raw: string | null | undefined) => new Set(toList(raw).map(equalityKey));
+  const target = {
+    sizes: keys(collection[settings.collectionSizeKey]),
+    cars: keys(collection[settings.collectionMatchKey]),
+  };
   return products
     .map((product, index) => ({
       id: product.id,
       index,
-      group: sortGroup(product, cars, settings),
+      group: sortGroup(product, target, settings),
       rank: rankOf(product, settings),
     }))
     .sort((a, b) => {
