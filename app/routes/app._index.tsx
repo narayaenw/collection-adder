@@ -8,13 +8,47 @@ import { authenticate } from "../shopify.server";
 import { evaluateProduct } from "../lib/evaluate.server";
 import { enqueueJob } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
-import type { AdminClient } from "../lib/shopify/api.server";
+import { gql, type AdminClient } from "../lib/shopify/api.server";
 import { toGid } from "../lib/shopify/queries";
 
+const TITLES_QUERY = `#graphql
+  query JobTargets($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product { id title }
+      ... on Collection { id title }
+    }
+  }`;
+
+/** The product or collection a job works on, taken from its payload. */
+function jobTarget(payload: unknown): string | null {
+  const p = (payload ?? {}) as { productId?: unknown; collectionId?: unknown };
+  const id = p.productId ?? p.collectionId;
+  return typeof id === "string" ? id : null;
+}
+
+/** Admin link for a product or collection GID, e.g. shopify://admin/products/123. */
+function adminUrl(gid: string): string | null {
+  const match = /^gid:\/\/shopify\/(Product|Collection)\/(\d+)$/.exec(gid);
+  if (!match) return null;
+  return `shopify://admin/${match[1] === "Product" ? "products" : "collections"}/${match[2]}`;
+}
+
+async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string, string>> {
+  const titles = new Map<string, string>();
+  if (ids.length === 0) return titles;
+  try {
+    const data = await gql(admin, TITLES_QUERY, { ids });
+    for (const node of data.nodes ?? []) if (node?.id) titles.set(node.id, node.title);
+  } catch (error) {
+    console.error("Loading job target titles failed", error);
+  }
+  return titles;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [collectionCount, lastSync, jobs, rules] = await Promise.all([
+  const [collectionCount, lastSync, jobs, rules, statusCounts] = await Promise.all([
     db.ruleCollection.count({ where: { shop } }),
     db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } }),
     db.job.findMany({
@@ -23,7 +57,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       take: 20,
     }),
     getRules(shop),
+    db.job.groupBy({
+      by: ["status"],
+      where: { shop, type: { not: "add-products" } },
+      _count: { _all: true },
+    }),
   ]);
+  const targets = jobs.map((j) => jobTarget(j.payload));
+  const titles = await loadTitles(
+    admin as unknown as AdminClient,
+    [...new Set(targets.filter((id): id is string => id !== null))],
+  );
   const pendingAdds = await db.job.count({
     where: { shop, type: "add-products", status: { in: ["queued", "running"] } },
   });
@@ -32,8 +76,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lastSync: lastSync._max.syncedAt?.toISOString() ?? null,
     pendingAdds,
     filter: rules.collectionFilter,
-    jobs: jobs.map((j) => ({
+    jobCounts: Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all])) as Record<string, number>,
+    jobs: jobs.map((j, i) => ({
       id: j.id,
+      target: targets[i]
+        ? { title: titles.get(targets[i]!) ?? targets[i]!.split("/").pop()!, url: adminUrl(targets[i]!) }
+        : null,
       type: j.type,
       status: j.status,
       message: j.message,
@@ -60,12 +108,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await enqueueJob(shop, "evaluate-collection", { collectionId: toGid("Collection", id) });
       return { message: "Vyhodnocení kolekce spuštěno." };
     case "evaluate-product": {
-      const result = await evaluateProduct(admin as unknown as AdminClient, shop, toGid("Product", id));
-      return {
-        message: result
-          ? `Produkt odpovídá ${result.matched} kolekcím, nově přidán do ${result.added}.`
-          : "Produkt nenalezen.",
-      };
+      const productId = toGid("Product", id);
+      const result = await evaluateProduct(admin as unknown as AdminClient, shop, productId);
+      const message = result
+        ? `Produkt odpovídá ${result.matched} kolekcím, nově přidán do ${result.added}.`
+        : "Produkt nenalezen.";
+      // Recorded so the result stays visible in the job list after the toast disappears.
+      await db.job.create({
+        data: { shop, type: "evaluate-product", payload: { productId }, status: "done", message },
+      });
+      return { message };
     }
     default:
       return { message: "Neznámá akce." };
@@ -150,6 +202,15 @@ export default function Index() {
       </s-section>
 
       <s-section heading="Poslední úlohy">
+        {data.jobs.length > 0 && (
+          <s-paragraph>
+            Celkem {Object.values(data.jobCounts).reduce((sum, n) => sum + n, 0)} úloh:{" "}
+            {Object.keys(STATUS_LABELS)
+              .map((status) => `${STATUS_LABELS[status]} ${data.jobCounts[status] ?? 0}`)
+              .join(", ")}
+            .
+          </s-paragraph>
+        )}
         {data.jobs.length === 0 ? (
           <s-paragraph>Zatím žádné úlohy.</s-paragraph>
         ) : (
@@ -157,6 +218,7 @@ export default function Index() {
             <s-table-header-row>
               <s-table-header>Čas</s-table-header>
               <s-table-header>Úloha</s-table-header>
+              <s-table-header>Produkt / kolekce</s-table-header>
               <s-table-header>Stav</s-table-header>
               <s-table-header>Výsledek</s-table-header>
             </s-table-header-row>
@@ -165,6 +227,13 @@ export default function Index() {
                 <s-table-row key={job.id}>
                   <s-table-cell>{new Date(job.createdAt).toLocaleString("cs-CZ")}</s-table-cell>
                   <s-table-cell>{JOB_LABELS[job.type] ?? job.type}</s-table-cell>
+                  <s-table-cell>
+                    {job.target?.url ? (
+                      <s-link href={job.target.url} target="_blank">{job.target.title}</s-link>
+                    ) : (
+                      job.target?.title ?? ""
+                    )}
+                  </s-table-cell>
                   <s-table-cell>
                     <s-badge tone={STATUS_TONES[job.status] ?? "neutral"}>
                       {STATUS_LABELS[job.status] ?? job.status}
