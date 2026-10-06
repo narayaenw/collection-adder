@@ -12,7 +12,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (topic === "COLLECTIONS_DELETE") {
     await db.ruleCollection.deleteMany({ where: { id: collectionId, shop } });
   } else {
-    await enqueueJob(shop, "sync-collection", { collectionId });
+    // Adding products to a collection fires this webhook too, so a burst of additions would
+    // queue the same refresh many times. One waiting refresh reads the latest state anyway.
+    const waiting = await db.job.findFirst({
+      where: {
+        shop,
+        type: "sync-collection",
+        status: "queued",
+        payload: { path: ["collectionId"], equals: collectionId },
+      },
+      select: { id: true },
+    });
+    if (!waiting) await enqueueJob(shop, "sync-collection", { collectionId });
   }
   return new Response();
 };
