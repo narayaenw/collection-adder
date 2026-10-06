@@ -6,6 +6,7 @@ export type JobType =
   | "sync-collection"
   | "evaluate-product"
   | "evaluate-collection"
+  | "evaluate-collections"
   | "evaluate-all"
   | "add-products";
 

@@ -19,6 +19,20 @@ const TITLES_QUERY = `#graphql
     }
   }`;
 
+/** Pulls ids out of pasted text: numbers, GIDs or admin URLs, separated by anything. */
+function parseIds(text: string, type: "Product" | "Collection") {
+  const ids = new Set<string>();
+  const invalid: string[] = [];
+  for (const token of text.split(/[\s,;]+/).filter(Boolean)) {
+    const match = /(\d+)\/?$/.exec(token);
+    if (match) ids.add(toGid(type, match[1]));
+    else invalid.push(token);
+  }
+  return { ids: [...ids], invalid };
+}
+
+const MAX_LIST_IDS = 5000;
+
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
   const p = (payload ?? {}) as { productId?: unknown; collectionId?: unknown };
@@ -119,6 +133,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return { message };
     }
+    case "evaluate-list": {
+      const type = form.get("listType") === "collection" ? "Collection" : "Product";
+      const { ids, invalid } = parseIds(String(form.get("ids") ?? ""), type);
+      if (ids.length === 0) return { message: "Seznam neobsahuje žádné platné ID." };
+      if (ids.length > MAX_LIST_IDS) return { message: `Najednou nejvýš ${MAX_LIST_IDS} ID.` };
+      if (type === "Product") {
+        for (const productId of ids) await enqueueJob(shop, "evaluate-product", { productId });
+      } else {
+        await enqueueJob(shop, "evaluate-collections", { collectionIds: ids });
+      }
+      const what = type === "Product" ? "produktů" : "kolekcí";
+      return {
+        message: `Vyhodnocení ${ids.length} ${what} spuštěno.` +
+          (invalid.length ? ` Neplatné: ${invalid.slice(0, 5).join(", ")}${invalid.length > 5 ? "…" : ""}` : ""),
+      };
+    }
     default:
       return { message: "Neznámá akce." };
   }
@@ -129,6 +159,7 @@ const JOB_LABELS: Record<string, string> = {
   "sync-collection": "Aktualizace kolekce",
   "evaluate-product": "Vyhodnocení produktu",
   "evaluate-collection": "Vyhodnocení kolekce",
+  "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
 };
 
@@ -199,6 +230,26 @@ export default function Index() {
             Obnovit
           </s-button>
         </s-stack>
+      </s-section>
+
+      <s-section heading="Vyhodnotit podle seznamu ID">
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="evaluate-list" />
+          <s-stack gap="base">
+            <s-select name="listType" label="Typ">
+              <s-option value="product">Produkty</s-option>
+              <s-option value="collection">Kolekce</s-option>
+            </s-select>
+            <s-text-area
+              name="ids"
+              label="ID (číslo, GID nebo odkaz z adminu; oddělené řádkem, čárkou nebo mezerou)"
+              rows={5}
+            />
+            <s-button type="submit" disabled={busy}>
+              Vyhodnotit seznam
+            </s-button>
+          </s-stack>
+        </fetcher.Form>
       </s-section>
 
       <s-section heading="Poslední úlohy">

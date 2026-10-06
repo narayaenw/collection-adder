@@ -94,6 +94,29 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     return `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
   },
 
+  async "evaluate-collections"(shop, payload) {
+    const admin = await adminFor(shop);
+    const rules = await getRules(shop);
+    const ids = new Set<string>();
+    for (const id of payload.collectionIds as string[]) {
+      const { synced } = await syncCollection(admin, shop, rules, id);
+      if (synced) ids.add(id);
+    }
+    const skipped = (payload.collectionIds as string[]).length - ids.size;
+    if (ids.size === 0) return "Žádná kolekce nemá pravidla (nebo jsou to smart kolekce).";
+    const { additions, productCount } = await planAdditions(admin, shop, ids);
+    let products = 0;
+    for (const [collectionId, productIds] of additions) {
+      for (const chunkIds of chunk(productIds, 250)) {
+        await enqueueJob(shop, "add-products", { collectionId, productIds: chunkIds });
+        products += chunkIds.length;
+      }
+    }
+    return `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí` +
+      (skipped ? ` (${skipped} přeskočeno, nemají pravidla)` : "") +
+      `. Naplánováno ${products} přiřazení.`;
+  },
+
   async "evaluate-all"(shop) {
     const admin = await adminFor(shop);
     await syncAllCollections(admin, shop, await getRules(shop));
