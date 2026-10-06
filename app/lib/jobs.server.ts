@@ -296,15 +296,12 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     await syncAllCollections(admin, shop, await getRules(shop));
     const { additions, productCount } = await planAdditions(admin, shop);
     const titles = new Map((await loadRuleCollections(shop)).map((c) => [c.id, c.title]));
-    const lines = ["collection_id,collection_title,product_ids"];
+    const lines = ["collection_id,collection_title,product_id"];
     let products = 0;
     for (const [collectionId, productIds] of additions) {
+      const collection = [numericId(collectionId), csvCell(titles.get(collectionId) ?? "")];
+      for (const productId of productIds) lines.push([...collection, numericId(productId)].join(","));
       products += productIds.length;
-      lines.push([
-        numericId(collectionId),
-        csvCell(titles.get(collectionId) ?? ""),
-        csvCell(productIds.map(numericId).join(",")),
-      ].join(","));
     }
     await db.exportFile.create({ data: { id: jobId, shop, csv: lines.join("\n") } });
     return `Prověřeno ${productCount} produktů. Export: ${additions.size} kolekcí, ${products} přiřazení.`;
