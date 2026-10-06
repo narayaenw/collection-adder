@@ -30,9 +30,18 @@ type Payload = Record<string, any>;
 /** Up to this many collections are evaluated by search; more share one full export. */
 const SEARCH_LIMIT = 50;
 
+/**
+ * Admin client for background jobs. Offline access tokens expire after an hour and jobs can
+ * run longer, so the session is loaded (and refreshed when close to expiry) for every call.
+ */
 async function adminFor(shop: string): Promise<AdminClient> {
-  const { admin } = await unauthenticated.admin(shop);
-  return admin as unknown as AdminClient;
+  await unauthenticated.admin(shop); // Fail fast when the shop has no session.
+  return {
+    graphql: async (query, options) => {
+      const { admin } = await unauthenticated.admin(shop);
+      return (admin as unknown as AdminClient).graphql(query, options);
+    },
+  };
 }
 
 async function addProducts(admin: AdminClient, collectionId: string, productIds: string[]) {
