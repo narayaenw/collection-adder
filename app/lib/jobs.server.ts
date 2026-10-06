@@ -198,6 +198,8 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     const rules = await getRules(shop);
     const { synced } = await syncCollection(admin, shop, rules, payload.collectionId);
     if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
+    // Checking one collection also sorts it, even when nothing new was added.
+    await queueSorting(shop, rules, [payload.collectionId]);
     const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
     if (fast.rest.size === 0) {
       return `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
@@ -209,7 +211,6 @@ const handlers: Record<JobType, (shop: string, payload: Payload) => Promise<stri
     );
     const toAdd = additions.get(payload.collectionId) ?? [];
     await addProducts(admin, payload.collectionId, toAdd);
-    if (toAdd.length > 0) await queueSorting(shop, rules, [payload.collectionId]);
     return `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
   },
 
