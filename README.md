@@ -58,22 +58,16 @@ gcloud tasks queues create collection-adder --location=$REGION \
   --max-dispatches-per-second=2 --max-concurrent-dispatches=4 \
   --max-attempts=5 --min-backoff=30s
 
-# 3. Aplikace
+# 3. Aplikace. Adresa služby je známá předem a aplikace bez ní nenastartuje.
 JOBS_SECRET=$(openssl rand -hex 32)
+URL=https://collection-adder-$(gcloud projects describe $PROJECT --format='value(projectNumber)').$REGION.run.app
+SA=$(gcloud projects describe $PROJECT --format='value(projectNumber)')-compute@developer.gserviceaccount.com
+for ROLE in roles/cloudsql.client roles/cloudtasks.enqueuer roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$SA --role=$ROLE --condition=None -q
+done
 gcloud run deploy collection-adder --source . --region=$REGION --allow-unauthenticated \
-  --add-cloudsql-instances=$PROJECT:$REGION:collection-adder-db \
-  --timeout=1800 --memory=2Gi --min-instances=1 \
-  --set-env-vars="SHOPIFY_API_KEY=...,SHOPIFY_API_SECRET=...,SCOPES=read_products,write_products" \
-  --set-env-vars="DATABASE_URL=postgresql://app:SILNE_HESLO@localhost/app?host=/cloudsql/$PROJECT:$REGION:collection-adder-db" \
-  --set-env-vars="GCP_PROJECT=$PROJECT,GCP_LOCATION=$REGION,CLOUD_TASKS_QUEUE=collection-adder,JOBS_SECRET=$JOBS_SECRET"
-
-# Po prvním nasazení doplň URL služby:
-URL=$(gcloud run services describe collection-adder --region=$REGION --format='value(status.url)')
-gcloud run services update collection-adder --region=$REGION --update-env-vars="SHOPIFY_APP_URL=$URL"
-
-# Účet služby Cloud Run musí smět zakládat úlohy ve frontě:
-SA=$(gcloud run services describe collection-adder --region=$REGION --format='value(spec.template.spec.serviceAccountName)')
-gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role=roles/cloudtasks.enqueuer
+  --add-cloudsql-instances=$PROJECT:$REGION:collection-adder-db --timeout=1800 --memory=2Gi \
+  --set-env-vars="^|^SHOPIFY_API_KEY=...|SHOPIFY_API_SECRET=...|SCOPES=read_products,write_products|SHOPIFY_APP_URL=$URL|DATABASE_URL=postgresql://app:SILNE_HESLO@localhost/app?host=/cloudsql/$PROJECT:$REGION:collection-adder-db|GCP_PROJECT=$PROJECT|GCP_LOCATION=$REGION|CLOUD_TASKS_QUEUE=collection-adder|JOBS_SECRET=$JOBS_SECRET"
 
 # 4. Noční synchronizace kolekcí
 gcloud scheduler jobs create http collection-adder-sync --location=$REGION \
