@@ -1,5 +1,5 @@
 import { normalizeText, toList } from "./engine";
-import type { CollectionSnapshot, RuleSet } from "./types";
+import { SUBCOLLECTION_KEY, type CollectionSnapshot, type RuleSet } from "./types";
 
 export interface RuleGroupRow {
   parentId: string;
@@ -29,13 +29,12 @@ export function ruleValueKeys(rules: RuleSet): string[] {
  * Values compare normalised ("5X112" = "5x112", list order ignored).
  */
 export function ruleGroups(collections: CollectionSnapshot[], rules: RuleSet): RuleGroupRow[] {
-  if (!rules.subcollectionKey) return [];
   const keys = ruleValueKeys(rules);
   const byId = new Map(collections.map((c) => [c.id, c]));
   const rows: RuleGroupRow[] = [];
 
   for (const parent of collections) {
-    const children = [...new Set(toList(parent.fields[rules.subcollectionKey]))]
+    const children = [...new Set(toList(parent.fields[SUBCOLLECTION_KEY]))]
       .filter((id) => id !== parent.id)
       .map((id) => byId.get(id))
       .filter((c): c is CollectionSnapshot => c !== undefined);

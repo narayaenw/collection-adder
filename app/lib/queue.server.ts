@@ -12,8 +12,7 @@ export type JobType =
   | "sort-collection"
   | "sort-all"
   | "export-plan"
-  | "export-rule-groups"
-  | "clear-subcollections";
+  | "export-rule-groups";
 
 let tasksClient: CloudTasksClient | undefined;
 

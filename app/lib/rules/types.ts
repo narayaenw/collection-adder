@@ -39,12 +39,6 @@ export interface RuleSet {
   conditions: Condition[];
   /** Products from these vendors are never added. Case-insensitive. */
   excludedVendors: string[];
-  /**
-   * Collection reference list metafield ("namespace.key") on a parent collection naming its
-   * subcollections. Products in a subcollection are also added to all its ancestors.
-   * Empty string turns this off.
-   */
-  subcollectionKey: string;
   sorting: SortSettings;
 }
 
@@ -116,7 +110,6 @@ export const DEFAULT_RULE_SET: RuleSet = {
     },
   ],
   excludedVendors: ["AEZ", "Dotz", "Dezent"],
-  subcollectionKey: "custom.subkolekce",
   sorting: {
     enabled: true,
     rankKey: "custom.rank",
@@ -127,3 +120,6 @@ export const DEFAULT_RULE_SET: RuleSet = {
     tag: "_TIP",
   },
 };
+
+/** Parent collection metafield listing its subcollections; only read by the matching-rules report. */
+export const SUBCOLLECTION_KEY = "custom.subkolekce";

@@ -36,7 +36,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : { type: "collection", key: sourceValues[i] },
     })),
     excludedVendors: String(form.get("excludedVendors") ?? "").split(/\r?\n|,/),
-    subcollectionKey: String(form.get("subcollectionKey") ?? ""),
     sorting: {
       enabled: form.get("sortEnabled") === "on",
       rankKey: form.get("sortRankKey"),
@@ -201,19 +200,6 @@ export default function Settings() {
             label="Produkty těchto výrobců se nikdy nepřidají (jeden na řádek)"
             value={shown.excludedVendors.join("\n")}
             rows={4}
-          />
-        </s-section>
-
-        <s-section heading="Strom kategorií">
-          <s-paragraph>
-            Produkty z podkolekcí se přidají i do všech nadřazených kolekcí. Metapole je seznam
-            referencí na kolekce na nadřazené kolekci. Prázdné pole propisování vypne.
-          </s-paragraph>
-          <s-text-field
-            name="subcollectionKey"
-            label="Metapole podkolekcí"
-            value={shown.subcollectionKey}
-            placeholder="custom.subkolekce"
           />
         </s-section>
 

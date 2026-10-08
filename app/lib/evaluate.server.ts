@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import { loadRuleCollections } from "./collections.server";
-import { buildAncestors, createMatcher, isVendorExcluded, withAncestors } from "./rules/engine";
+import { createMatcher, isVendorExcluded } from "./rules/engine";
 import { getRules } from "./settings.server";
 import { queueSorting } from "./sort.server";
 import { assertNoUserErrors, chunk, gql, type AdminClient } from "./shopify/api.server";
@@ -26,8 +26,7 @@ async function currentCollectionIds(admin: AdminClient, productId: string) {
 
 /**
  * Matches one product against all rule collections (from the local copy) and joins the
- * collections it is not in yet, plus the parents of every collection it is in. Fast enough to
- * run straight from the admin.
+ * collections it is not in yet. Fast enough to run straight from the admin.
  */
 export async function evaluateProduct(admin: AdminClient, shop: string, productId: string) {
   const rules = await getRules(shop);
@@ -39,8 +38,7 @@ export async function evaluateProduct(admin: AdminClient, shop: string, productI
   const collections = await loadRuleCollections(shop);
   const matched = createMatcher(collections, rules)(product);
   const current = await currentCollectionIds(admin, productId);
-  const targets = withAncestors([...matched, ...current], buildAncestors(collections, rules));
-  const toJoin = [...targets].filter((id) => !current.has(id));
+  const toJoin = matched.filter((id) => !current.has(id));
 
   for (const ids of chunk(toJoin, 250)) {
     const result = await gql(admin, PRODUCT_JOIN_COLLECTIONS, {
