@@ -19,6 +19,21 @@ function queuedRecently(key: string, now: number) {
   return false;
 }
 
+// New YMM collections are rare and the nightly full sync picks them up, so webhooks only
+// refresh collections already known to have rules. The list is cached per instance.
+const KNOWN_TTL_MS = 10 * 60 * 1000;
+const knownCollections = new Map<string, { ids: Set<string>; loadedAt: number }>();
+
+async function isKnownRuleCollection(shop: string, collectionId: string, now: number) {
+  let known = knownCollections.get(shop);
+  if (!known || now - known.loadedAt >= KNOWN_TTL_MS) {
+    const rows = await db.ruleCollection.findMany({ where: { shop }, select: { id: true } });
+    known = { ids: new Set(rows.map((r) => r.id)), loadedAt: now };
+    knownCollections.set(shop, known);
+  }
+  return known.ids.has(collectionId);
+}
+
 // Keeps the local copy of rule collections current.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const rawBody = await request.text();
@@ -38,7 +53,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response();
   }
 
-  if (queuedRecently(`${shop}|${collectionId}`, Date.now())) return new Response();
+  const now = Date.now();
+  if (!(await isKnownRuleCollection(shop, collectionId, now))) return new Response();
+  if (queuedRecently(`${shop}|${collectionId}`, now)) return new Response();
 
   const waiting = await db.job.findFirst({
     where: {
