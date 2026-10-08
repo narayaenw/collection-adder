@@ -25,12 +25,17 @@ export async function syncAllCollections(admin: AdminClient, shop: string, rules
     else eligible.push(snapshot);
   }
 
+  // Several jobs run this concurrently (and webhooks upsert single rows meanwhile), so the
+  // replace is serialized per shop and inserts tolerate rows another writer already added.
+  const unique = [...new Map(eligible.map((c) => [c.id, c])).values()];
   await db.$transaction(
     async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"sync-collections:" + shop}))`;
       await tx.ruleCollection.deleteMany({ where: { shop } });
-      for (let i = 0; i < eligible.length; i += 1000) {
+      for (let i = 0; i < unique.length; i += 1000) {
         await tx.ruleCollection.createMany({
-          data: eligible.slice(i, i + 1000).map((c) => ({
+          skipDuplicates: true,
+          data: unique.slice(i, i + 1000).map((c) => ({
             id: c.id,
             shop,
             title: c.title ?? "",
@@ -42,7 +47,7 @@ export async function syncAllCollections(admin: AdminClient, shop: string, rules
     { timeout: 120000 },
   );
 
-  return { total: rows.length, synced: eligible.length, smartSkipped };
+  return { total: rows.length, synced: unique.length, smartSkipped };
 }
 
 /** Refreshes one collection after a collection webhook. */
