@@ -11,7 +11,8 @@ export type JobType =
   | "add-products"
   | "sort-collection"
   | "sort-all"
-  | "export-plan";
+  | "export-plan"
+  | "export-rule-groups";
 
 let tasksClient: CloudTasksClient | undefined;
 

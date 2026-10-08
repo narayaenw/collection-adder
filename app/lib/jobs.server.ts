@@ -14,6 +14,7 @@ import {
   withAncestors,
 } from "./rules/engine";
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
+import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -341,6 +342,26 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     }
     if (lines.length > 0 || parts === 0) await flush();
     return `Prověřeno ${productCount} produktů. Export: ${additions.size} kolekcí, ${products} přiřazení v ${parts} souborech.`;
+  },
+
+  /**
+   * For every parent collection, its direct subcollections grouped by the values the rules
+   * read, as CSV: one row per parent and distinct combination.
+   */
+  async "export-rule-groups"(shop, _payload, jobId) {
+    const admin = await adminFor(shop);
+    const rules = await getRules(shop);
+    await syncAllCollections(admin, shop, rules);
+    const rows = ruleGroups(await loadRuleCollections(shop), rules);
+    await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
+    const header = ["parent_id", "parent_title", "subcollections", "distinct_rules", ...ruleValueKeys(rules), "count"].join(",");
+    const lines = rows.map((r) =>
+      [numericId(r.parentId), csvCell(r.parentTitle), r.childCount, r.groupCount, ...r.values.map(csvCell), r.count].join(","),
+    );
+    await db.exportFile.create({ data: { id: `${jobId}-1`, shop, csv: [header, ...lines].join("\n") } });
+    const parents = new Set(rows.map((r) => r.parentId));
+    const children = [...parents].reduce((sum, id) => sum + rows.find((r) => r.parentId === id)!.childCount, 0);
+    return `Report: ${parents.size} nadřazených kolekcí, ${children} podkolekcí, ${rows.length} různých kombinací pravidel.`;
   },
 
   async "sort-collection"(shop, payload) {

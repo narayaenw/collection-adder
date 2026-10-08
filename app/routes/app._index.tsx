@@ -85,7 +85,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     admin as unknown as AdminClient,
     [...new Set(targets.filter((id): id is string => id !== null))],
   );
-  const exportJobIds = jobs.filter((j) => j.type === "export-plan" && j.status === "done").map((j) => j.id);
+  const exportJobIds = jobs
+    .filter((j) => (j.type === "export-plan" || j.type === "export-rule-groups") && j.status === "done").map((j) => j.id);
   const exportFiles = await db.exportFile.findMany({
     where: { shop, OR: exportJobIds.map((id) => ({ id: { startsWith: `${id}-` } })) },
     select: { id: true },
@@ -142,6 +143,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await enqueueJob(shop, "export-plan", { excludeTitles, activeOnly });
       return { message: "Export plánu spuštěn, po dokončení ho stáhnete v seznamu úloh." };
     }
+    case "export-rule-groups":
+      await enqueueJob(shop, "export-rule-groups");
+      return { message: "Report spuštěn, po dokončení ho stáhnete v seznamu úloh." };
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -190,6 +194,7 @@ const JOB_LABELS: Record<string, string> = {
   "evaluate-all": "Vyhodnocení všeho",
   "sort-all": "Řazení všech kolekcí",
   "export-plan": "Export plánu",
+  "export-rule-groups": "Report shodných pravidel",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
@@ -294,6 +299,18 @@ export default function Index() {
             </s-button>
           </s-stack>
         </fetcher.Form>
+      </s-section>
+
+      <s-section heading="Report shodných pravidel (CSV)">
+        <s-stack gap="base">
+          <s-paragraph>
+            Pro každou nadřazenou kolekci spočítá, kolik jejích podkolekcí (motorizací) má stejné
+            hodnoty pravidel.
+          </s-paragraph>
+          <s-button onClick={() => submit("export-rule-groups")} disabled={busy}>
+            Spustit report
+          </s-button>
+        </s-stack>
       </s-section>
 
       <s-section heading="Vyhodnotit podle seznamu ID">
