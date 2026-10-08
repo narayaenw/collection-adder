@@ -29,6 +29,15 @@ import {
 
 type Payload = Record<string, any>;
 
+const METAFIELDS_DELETE = `#graphql
+  mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields { key }
+      userErrors { field message }
+    }
+  }
+`;
+
 /** Up to this many collections are evaluated by search; more share one full export. */
 const SEARCH_LIMIT = 50;
 
@@ -362,6 +371,35 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const parents = new Set(rows.map((r) => r.parentId));
     const children = [...parents].reduce((sum, id) => sum + rows.find((r) => r.parentId === id)!.childCount, 0);
     return `Report: ${parents.size} nadřazených kolekcí, ${children} podkolekcí, ${rows.length} různých kombinací pravidel.`;
+  },
+
+  /**
+   * One-off data cleanup: deletes the subcollection metafield on collections with an id above
+   * minId that have requiredKey filled in. Collections themselves stay.
+   */
+  async "clear-subcollections"(shop, payload) {
+    const admin = await adminFor(shop);
+    const [namespace, key] = String(payload.key).split(".");
+    const [reqNamespace, reqKey] = String(payload.requiredKey).split(".");
+    const query = `{ collections(query: "id:>${Number(payload.minId)}") { edges { node { id
+      required: metafield(namespace: "${reqNamespace}", key: "${reqKey}") { value }
+      target: metafield(namespace: "${namespace}", key: "${key}") { id } } } } }`;
+    const owners: string[] = [];
+    let checked = 0;
+    await forEachBulkRow(admin, query, (row) => {
+      if (typeof row.id !== "string" || !row.id.includes("/Collection/")) return;
+      checked++;
+      if (row.target && String(row.required?.value ?? "").trim() !== "") owners.push(row.id);
+    });
+    let deleted = 0;
+    for (const ids of chunk(owners, 250)) {
+      const data = await gql(admin, METAFIELDS_DELETE, {
+        metafields: ids.map((ownerId) => ({ ownerId, namespace, key })),
+      });
+      assertNoUserErrors("metafieldsDelete", data.metafieldsDelete.userErrors);
+      deleted += ids.length;
+    }
+    return `Prověřeno ${checked} kolekcí, smazáno ${deleted} hodnot ${payload.key}.`;
   },
 
   async "sort-collection"(shop, payload) {

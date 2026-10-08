@@ -143,6 +143,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await enqueueJob(shop, "export-plan", { excludeTitles, activeOnly });
       return { message: "Export plánu spuštěn, po dokončení ho stáhnete v seznamu úloh." };
     }
+    case "clear-subcollections": {
+      const minId = String(form.get("minId") ?? "").trim();
+      const requiredKey = String(form.get("requiredKey") ?? "").trim();
+      const key = String(form.get("key") ?? "").trim();
+      if (!/^\d+$/.test(minId) || !/^\w+\.\w+$/.test(requiredKey) || !/^\w+\.\w+$/.test(key)) {
+        return { message: "Neplatné ID nebo metapole." };
+      }
+      await enqueueJob(shop, "clear-subcollections", { minId, requiredKey, key });
+      return { message: "Mazání vazeb spuštěno." };
+    }
     case "export-rule-groups":
       await enqueueJob(shop, "export-rule-groups");
       return { message: "Report spuštěn, po dokončení ho stáhnete v seznamu úloh." };
@@ -195,6 +205,7 @@ const JOB_LABELS: Record<string, string> = {
   "sort-all": "Řazení všech kolekcí",
   "export-plan": "Export plánu",
   "export-rule-groups": "Report shodných pravidel",
+  "clear-subcollections": "Mazání vazeb podkolekcí",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
@@ -311,6 +322,20 @@ export default function Index() {
             Spustit report
           </s-button>
         </s-stack>
+      </s-section>
+
+      <s-section heading="Smazat vazby podkolekcí (jednorázově)">
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="clear-subcollections" />
+          <s-stack gap="base">
+            <s-text-field name="key" label="Mazané metapole" defaultValue="custom.subkolekce" />
+            <s-text-field name="requiredKey" label="Jen kolekce s vyplněným metapolem" defaultValue="custom.ymm_motor" />
+            <s-text-field name="minId" label="Jen kolekce s ID větším než" defaultValue="724501168396" />
+            <s-button type="submit" disabled={busy}>
+              Smazat vazby
+            </s-button>
+          </s-stack>
+        </fetcher.Form>
       </s-section>
 
       <s-section heading="Vyhodnotit podle seznamu ID">
