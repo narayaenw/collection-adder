@@ -22,16 +22,23 @@ function queuedRecently(key: string, now: number) {
 // New YMM collections are rare and the nightly full sync picks them up, so webhooks only
 // refresh collections already known to have rules. The list is cached per instance.
 const KNOWN_TTL_MS = 10 * 60 * 1000;
-const knownCollections = new Map<string, { ids: Set<string>; loadedAt: number }>();
+// Concurrent webhooks share one load, so a burst does not exhaust the DB connection pool.
+const knownCollections = new Map<string, { ids: Promise<Set<string>>; loadedAt: number }>();
 
 async function isKnownRuleCollection(shop: string, collectionId: string, now: number) {
   let known = knownCollections.get(shop);
   if (!known || now - known.loadedAt >= KNOWN_TTL_MS) {
-    const rows = await db.ruleCollection.findMany({ where: { shop }, select: { id: true } });
-    known = { ids: new Set(rows.map((r) => r.id)), loadedAt: now };
+    const ids = db.ruleCollection
+      .findMany({ where: { shop }, select: { id: true } })
+      .then((rows) => new Set(rows.map((r) => r.id)));
+    known = { ids, loadedAt: now };
     knownCollections.set(shop, known);
+    // A failed load is not cached, so the next webhook retries it.
+    ids.catch(() => {
+      if (knownCollections.get(shop) === known) knownCollections.delete(shop);
+    });
   }
-  return known.ids.has(collectionId);
+  return (await known.ids).has(collectionId);
 }
 
 // Keeps the local copy of rule collections current.
