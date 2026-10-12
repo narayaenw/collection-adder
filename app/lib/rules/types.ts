@@ -39,7 +39,28 @@ export interface RuleSet {
   conditions: Condition[];
   /** Products from these vendors are never added. Case-insensitive. */
   excludedVendors: string[];
+  carMatch: CarMatchSettings;
+  removal: RemovalSettings;
   sorting: SortSettings;
+}
+
+/**
+ * Products of these vendors only go to collections of their own car: the product list
+ * metafield `productKey` must contain the collection's `collectionKey` value.
+ */
+export interface CarMatchSettings {
+  /** Case-insensitive vendor names. Empty list turns the condition off. */
+  vendors: string[];
+  productKey: string;
+  collectionKey: string;
+}
+
+/** Removing products that no longer match from rule collections. */
+export interface RemovalSettings {
+  /** Without this a removal run only reports what it would remove. */
+  enabled: boolean;
+  /** Run after the nightly collection sync. */
+  nightly: boolean;
 }
 
 /**
@@ -110,6 +131,12 @@ export const DEFAULT_RULE_SET: RuleSet = {
     },
   ],
   excludedVendors: ["AEZ", "Dotz", "Dezent"],
+  carMatch: {
+    vendors: ["Racing Line"],
+    productKey: "custom.auto",
+    collectionKey: "ymm.znacka",
+  },
+  removal: { enabled: false, nightly: true },
   sorting: {
     enabled: true,
     rankKey: "custom.rank",

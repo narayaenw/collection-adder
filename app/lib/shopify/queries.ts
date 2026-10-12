@@ -129,6 +129,36 @@ export function productSearchPageQuery(rules: RuleSet): string {
   }`;
 }
 
+/** A page of a collection's products with the fields the rules need. */
+export function collectionRuleProductsQuery(rules: RuleSet): string {
+  return `#graphql
+  query CollectionRuleProducts($id: ID!, $after: String) {
+    collection(id: $id) {
+      id
+      ruleSet { appliedDisjunctively }
+      products(first: 250, after: $after) {
+        nodes {
+          id
+          title
+          vendor
+          productType
+          tags
+          ${metafieldSelections(productMetafieldKeys(rules))}
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+}
+
+export const COLLECTION_REMOVE_PRODUCTS = `#graphql
+  mutation RemoveProducts($id: ID!, $productIds: [ID!]!) {
+    collectionRemoveProducts(id: $id, productIds: $productIds) {
+      job { id }
+      userErrors { field message }
+    }
+  }`;
+
 export const PRODUCT_COLLECTIONS_QUERY = `#graphql
   query ProductCollections($id: ID!, $after: String) {
     product(id: $id) {

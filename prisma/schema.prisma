@@ -70,3 +70,22 @@ model ExportFile {
 
   @@index([shop, createdAt])
 }
+
+/// A product found in a rule collection it does not match, recorded by a removal run.
+model RemovalItem {
+  id              String   @id @default(cuid())
+  shop            String
+  /// Id of the remove-unmatched job that started the run.
+  runId           String
+  collectionId    String
+  collectionTitle String
+  productId       String
+  productTitle    String
+  vendor          String
+  /// False when the run only reported what it would remove.
+  removed         Boolean
+  createdAt       DateTime @default(now())
+
+  @@index([shop, runId])
+  @@index([runId, collectionId])
+}

@@ -117,6 +117,7 @@ describe("default rules on the Abarth collection", () => {
       "custom.cb",
       "custom.inner_mm",
       "custom.outer_mm",
+      "custom.auto",
     ]);
     expect(collectionMetafieldKeys(rules)).toContain("custom.ucel");
     expect(collectionMetafieldKeys(rules)).toContain("custom.ymm_outer_cb");
@@ -225,5 +226,36 @@ describe("productSearchQuery", () => {
 
   it("returns null when the collection lacks a value", () => {
     expect(productSearchQuery({ ...gle, fields: { ...gle.fields, "custom.ymm_cb": null } }, rules)).toBeNull();
+  });
+});
+
+describe("car match vendors", () => {
+  const bmw: CollectionSnapshot = { ...abarth, fields: { ...abarth.fields, "ymm.znacka": "BMW" } };
+
+  it("adds listed vendors only to collections of their car", () => {
+    const racing = (cars: string | null) => wheel({ vendor: "racing line", "custom.auto": cars });
+    expect(matchingCollectionIds(racing('["Audi","bmw"]'), [bmw], DEFAULT_RULE_SET)).toEqual([bmw.id]);
+    expect(matchingCollectionIds(racing('["Audi"]'), [bmw], DEFAULT_RULE_SET)).toEqual([]);
+    expect(matchingCollectionIds(racing(null), [bmw], DEFAULT_RULE_SET)).toEqual([]);
+    expect(createMatcher([bmw], DEFAULT_RULE_SET)(racing('["BMW"]'))).toEqual([bmw.id]);
+    expect(createMatcher([bmw], DEFAULT_RULE_SET)(racing('["Audi"]'))).toEqual([]);
+  });
+
+  it("leaves other vendors alone", () => {
+    expect(createMatcher([bmw], DEFAULT_RULE_SET)(wheel({ "custom.auto": '["Audi"]' }))).toEqual([bmw.id]);
+  });
+
+  it("reads the car fields", () => {
+    expect(productMetafieldKeys(DEFAULT_RULE_SET)).toContain("custom.auto");
+    expect(collectionMetafieldKeys(DEFAULT_RULE_SET)).toContain("ymm.znacka");
+  });
+
+  it("defaults missing settings for rules saved before", () => {
+    const old: Record<string, unknown> = { ...DEFAULT_RULE_SET };
+    delete old.carMatch;
+    delete old.removal;
+    const { rules } = parseRuleSet(old);
+    expect(rules?.carMatch).toEqual(DEFAULT_RULE_SET.carMatch);
+    expect(rules?.removal).toEqual({ enabled: false, nightly: true });
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "./rules/engine";
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
+import { cleanCollection } from "./removal.server";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -327,6 +328,29 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const collections = await loadRuleCollections(shop);
     for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
     return `Naplánováno seřazení ${collections.length} kolekcí.`;
+  },
+
+  /** Checks every rule collection for products the rules no longer put there, one job each. */
+  async "remove-unmatched"(shop, _payload, jobId) {
+    const rules = await getRules(shop);
+    const remove = rules.removal.enabled;
+    // A stale copy could lack values the rules read (like the car), which would remove too much.
+    await syncAllCollections(await adminFor(shop), shop, rules);
+    const collections = await loadRuleCollections(shop);
+    for (const { id } of collections) {
+      await enqueueJob(shop, "clean-collection", { collectionId: id, runId: jobId, remove });
+    }
+    return `Naplánována kontrola ${collections.length} kolekcí` +
+      (remove ? ", nevyhovující produkty se odeberou." : " nanečisto (nic se neodebere).");
+  },
+
+  async "clean-collection"(shop, payload) {
+    const admin = await adminFor(shop);
+    return cleanCollection(admin, shop, await getRules(shop), {
+      collectionId: payload.collectionId,
+      runId: payload.runId,
+      remove: payload.remove === true,
+    });
   },
 
   async "add-products"(shop, payload) {

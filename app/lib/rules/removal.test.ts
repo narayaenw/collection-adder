@@ -1,0 +1,53 @@
+import { describe, expect, it } from "vitest";
+import { unmatchedProducts } from "./removal";
+import { DEFAULT_RULE_SET, type CollectionSnapshot, type ProductSnapshot } from "./types";
+
+const ymm = (id: string, pcd: string, car: string): CollectionSnapshot => ({
+  id,
+  fields: {
+    "custom.ucel": "YMM Cloudflare",
+    "custom.ymm_size": '["16-17"]',
+    "custom.ymm_cb": "58.1",
+    "custom.ymm_pcd": `["${pcd}"]`,
+    "custom.ymm_inner_cb": "147.4",
+    "custom.ymm_outer_cb": "65.4",
+    "ymm.znacka": car,
+  },
+});
+
+const wheel = (id: string, fields: Record<string, string | null> = {}): ProductSnapshot => ({
+  id,
+  fields: {
+    vendor: "Brock",
+    "custom.pcd": '["4x98"]',
+    "custom.size": "17",
+    "custom.cb": "58.1",
+    "custom.inner_mm": "140",
+    "custom.outer_mm": "60",
+    ...fields,
+  },
+});
+
+describe("unmatchedProducts", () => {
+  const bmw = ymm("c1", "4x98", "BMW");
+
+  it("keeps matching products and returns the rest", () => {
+    const products = [wheel("p1"), wheel("p2", { "custom.pcd": '["5x112"]' }), wheel("p3", { vendor: "AEZ" })];
+    expect(unmatchedProducts(bmw, [], products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
+  });
+
+  it("keeps products that match a subcollection", () => {
+    const child = ymm("c2", "5x112", "BMW");
+    const products = [wheel("p2", { "custom.pcd": '["5x112"]' })];
+    expect(unmatchedProducts(bmw, [child], products, DEFAULT_RULE_SET)).toEqual([]);
+  });
+
+  it("removes Racing Line products made for another car", () => {
+    const products = [
+      wheel("p1", { vendor: "Racing Line", "custom.auto": '["BMW"]' }),
+      wheel("p2", { vendor: "Racing Line", "custom.auto": '["Audi"]' }),
+      wheel("p3", { vendor: "Racing Line", "custom.auto": null }),
+    ];
+    expect(unmatchedProducts(bmw, [], products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
+  });
+});

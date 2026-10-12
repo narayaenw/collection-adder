@@ -36,6 +36,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : { type: "collection", key: sourceValues[i] },
     })),
     excludedVendors: String(form.get("excludedVendors") ?? "").split(/\r?\n|,/),
+    carMatch: {
+      vendors: String(form.get("carMatchVendors") ?? "").split(/\r?\n|,/),
+      productKey: form.get("carMatchProductKey"),
+      collectionKey: form.get("carMatchCollectionKey"),
+    },
+    removal: {
+      enabled: form.get("removalEnabled") === "on",
+      nightly: form.get("removalNightly") === "on",
+    },
     sorting: {
       enabled: form.get("sortEnabled") === "on",
       rankKey: form.get("sortRankKey"),
@@ -201,6 +210,57 @@ export default function Settings() {
             value={shown.excludedVendors.join("\n")}
             rows={4}
           />
+        </s-section>
+
+        <s-section heading="Výrobci jen pro své auto">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>
+              Produkty těchto výrobců se přidají jen do kolekcí, jejichž auto je v seznamu aut
+              produktu. Produkt bez vyplněných aut se nepřidá nikam.
+            </s-paragraph>
+            <s-text-area
+              name="carMatchVendors"
+              label="Výrobci (jeden na řádek)"
+              value={shown.carMatch.vendors.join("\n")}
+              rows={3}
+            />
+            <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+              <s-text-field
+                name="carMatchProductKey"
+                label="Auta na produktu"
+                value={shown.carMatch.productKey}
+                placeholder="custom.auto"
+              />
+              <s-text-field
+                name="carMatchCollectionKey"
+                label="Auto kolekce"
+                value={shown.carMatch.collectionKey}
+                placeholder="ymm.znacka"
+              />
+            </s-grid>
+          </s-stack>
+        </s-section>
+
+        <s-section heading="Odebírání nevyhovujících produktů">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>
+              Projde všechny kolekce s pravidly a najde produkty, které pravidla do kolekce
+              nezařazují (i ručně přidané). Produkt nadřazené kolekce zůstane, pokud patří do
+              některé její podkolekce. Bez ostrého odebírání se jen vypíše, co by se odebralo.
+            </s-paragraph>
+            <s-checkbox
+              name="removalEnabled"
+              value="on"
+              label="Ostré odebírání (produkty se z kolekcí opravdu odeberou)"
+              defaultChecked={shown.removal.enabled}
+            />
+            <s-checkbox
+              name="removalNightly"
+              value="on"
+              label="Spouštět každou noc po synchronizaci kolekcí"
+              defaultChecked={shown.removal.nightly}
+            />
+          </s-stack>
         </s-section>
 
         <s-section heading="Řazení produktů v kolekcích">

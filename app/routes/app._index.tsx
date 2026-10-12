@@ -34,7 +34,7 @@ function parseIds(text: string, type: "Product" | "Collection") {
 const MAX_LIST_IDS = 5000;
 
 /** Jobs created in bulk, shown as a count instead of in the job list. */
-const BATCH_JOBS = ["add-products", "sort-collection"];
+const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection"];
 
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
@@ -92,13 +92,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });
-  const [pendingAdds, pendingSorts] = await Promise.all(
+  const [pendingAdds, pendingSorts, pendingCleans] = await Promise.all(
     BATCH_JOBS.map((type) =>
       db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
     ),
   );
+  const lastRemoval = await db.job.findFirst({
+    where: { shop, type: "remove-unmatched" },
+    orderBy: { createdAt: "desc" },
+  });
+  const removalCounts = lastRemoval
+    ? await db.removalItem.groupBy({
+        by: ["removed"],
+        where: { shop, runId: lastRemoval.id },
+        _count: { _all: true },
+      })
+    : [];
   return {
     collectionCount,
+    pendingCleans,
+    removal: {
+      enabled: rules.removal.enabled,
+      nightly: rules.removal.nightly,
+      last: lastRemoval
+        ? {
+            id: lastRemoval.id,
+            createdAt: lastRemoval.createdAt.toISOString(),
+            message: lastRemoval.message,
+            found: removalCounts.reduce((sum, c) => sum + c._count._all, 0),
+            removed: removalCounts.find((c) => c.removed)?._count._all ?? 0,
+          }
+        : null,
+    },
     lastSync: lastSync._max.syncedAt?.toISOString() ?? null,
     pendingAdds,
     pendingSorts,
@@ -146,6 +171,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "export-rule-groups":
       await enqueueJob(shop, "export-rule-groups");
       return { message: "Report spuštěn, po dokončení ho stáhnete v seznamu úloh." };
+    case "remove-unmatched": {
+      await enqueueJob(shop, "remove-unmatched");
+      const { removal } = await getRules(shop);
+      return {
+        message: removal.enabled
+          ? "Odebírání nevyhovujících produktů spuštěno."
+          : "Kontrola nanečisto spuštěna, nic se neodebere.",
+      };
+    }
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -195,16 +229,17 @@ const JOB_LABELS: Record<string, string> = {
   "sort-all": "Řazení všech kolekcí",
   "export-plan": "Export plánu",
   "export-rule-groups": "Report shodných pravidel",
+  "remove-unmatched": "Odebrání nevyhovujících",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
-async function downloadExport(id: string) {
-  const response = await fetch(`/app/export/${id}`);
+async function downloadExport(id: string, path = `/app/export/${id}`, name = `plan-${id}.csv`) {
+  const response = await fetch(path);
   if (!response.ok) throw new Error(await response.text());
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
-  link.download = `plan-${id}.csv`;
+  link.download = name;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -281,6 +316,45 @@ export default function Index() {
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit
           </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Odebírání nevyhovujících produktů">
+        <s-stack gap="base">
+          <s-paragraph>
+            {data.removal.enabled
+              ? "Ostré odebírání je zapnuté: nevyhovující produkty se z kolekcí odeberou."
+              : "Ostré odebírání je vypnuté: kontrola jen vypíše, co by se odebralo."}{" "}
+            {data.removal.nightly ? "Spouští se každou noc." : "Noční spouštění je vypnuté."} Změna v
+            nastavení.
+          </s-paragraph>
+          {data.removal.last && (
+            <s-paragraph>
+              Poslední běh {new Date(data.removal.last.createdAt).toLocaleString("cs-CZ")}:{" "}
+              {data.removal.last.message ?? "čeká ve frontě"} Zatím nalezeno{" "}
+              {data.removal.last.found} nevyhovujících, odebráno {data.removal.last.removed}.
+              {data.pendingCleans > 0 && ` Zbývá zkontrolovat ${data.pendingCleans} kolekcí.`}
+            </s-paragraph>
+          )}
+          <s-stack direction="inline" gap="base">
+            <s-button onClick={() => submit("remove-unmatched")} disabled={busy}>
+              {data.removal.enabled ? "Odebrat nevyhovující" : "Zkontrolovat nanečisto"}
+            </s-button>
+            {data.removal.last && data.removal.last.found > 0 && (
+              <s-button
+                variant="tertiary"
+                onClick={() =>
+                  downloadExport(
+                    data.removal.last!.id,
+                    `/app/removals/${data.removal.last!.id}`,
+                    `odebrani-${data.removal.last!.id}.csv`,
+                  ).catch((error) => shopify.toast.show(String(error), { isError: true }))
+                }
+              >
+                Stáhnout CSV
+              </s-button>
+            )}
+          </s-stack>
         </s-stack>
       </s-section>
 

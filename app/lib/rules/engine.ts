@@ -1,4 +1,5 @@
 import {
+  type CarMatchSettings,
   DEFAULT_RULE_SET,
   OPERATORS,
   PRODUCT_BUILTIN_FIELDS,
@@ -7,6 +8,7 @@ import {
   type Condition,
   type FieldMap,
   type ProductSnapshot,
+  type RemovalSettings,
   type RuleSet,
   type SortSettings,
 } from "./types";
@@ -171,6 +173,18 @@ export function isVendorExcluded(product: ProductSnapshot, rules: RuleSet): bool
   return rules.excludedVendors.some((v) => normalizeText(v) === vendor);
 }
 
+/** Whether the product's vendor may only go to collections of its own car. */
+export function needsCarMatch(product: ProductSnapshot, rules: RuleSet): boolean {
+  const vendor = normalizeText(product.fields.vendor ?? "");
+  if (!vendor) return false;
+  return rules.carMatch.vendors.some((v) => normalizeText(v) === vendor);
+}
+
+function carMatches(product: ProductSnapshot, collection: CollectionSnapshot, rules: RuleSet): boolean {
+  const { productKey, collectionKey } = rules.carMatch;
+  return hasCommonKey(parse(product.fields[productKey]).keys, parse(collection.fields[collectionKey]).keys);
+}
+
 export function isRuleCollection(collection: CollectionSnapshot, rules: RuleSet): boolean {
   const { key, value } = rules.collectionFilter;
   return toList(collection.fields[key]).some((v) => normalizeText(v) === normalizeText(value));
@@ -183,6 +197,7 @@ export function productMatchesCollection(
 ): boolean {
   if (rules.conditions.length === 0) return false;
   if (isVendorExcluded(product, rules)) return false;
+  if (needsCarMatch(product, rules) && !carMatches(product, collection, rules)) return false;
   return rules.conditions.every((c) => evaluateCondition(c, product.fields, collection.fields));
 }
 
@@ -209,6 +224,7 @@ export function createMatcher(collections: CollectionSnapshot[], rules: RuleSet)
   const prepared = collections.map((collection) => ({
     id: collection.id,
     values: conditions.map((c) => targetValue(c, collection.fields)),
+    cars: parse(collection.fields[rules.carMatch.collectionKey]).keys,
   }));
 
   const indexAt = conditions.findIndex((c) => c.operator === "eq" && c.source.type === "collection");
@@ -226,6 +242,8 @@ export function createMatcher(collections: CollectionSnapshot[], rules: RuleSet)
   return (product: ProductSnapshot): string[] => {
     if (conditions.length === 0 || isVendorExcluded(product, rules)) return [];
     const productValues = conditions.map((c) => parse(product.fields[c.productField]));
+    const cars = needsCarMatch(product, rules) ? parse(product.fields[rules.carMatch.productKey]).keys : null;
+    if (cars && cars.length === 0) return [];
 
     let candidates: (typeof prepared)[number][] = prepared;
     if (indexAt >= 0) {
@@ -242,7 +260,7 @@ export function createMatcher(collections: CollectionSnapshot[], rules: RuleSet)
     const matched: string[] = [];
     for (let c = 0; c < candidates.length; c++) {
       const collection = candidates[c];
-      let ok = true;
+      let ok = cars === null || hasCommonKey(cars, collection.cars);
       for (let i = 0; i < conditions.length && ok; i++) {
         ok = compare(conditions[i].operator, productValues[i], collection.values[i]);
       }
@@ -256,6 +274,7 @@ export function createMatcher(collections: CollectionSnapshot[], rules: RuleSet)
 export function productFieldsUsed(rules: RuleSet): string[] {
   const fields = new Set<string>(["vendor"]);
   for (const c of rules.conditions) fields.add(c.productField);
+  if (rules.carMatch.vendors.length > 0) fields.add(rules.carMatch.productKey);
   return [...fields];
 }
 
@@ -269,6 +288,7 @@ export function collectionMetafieldKeys(rules: RuleSet): string[] {
   for (const c of rules.conditions) {
     if (c.source.type === "collection") keys.add(c.source.key);
   }
+  if (rules.carMatch.vendors.length > 0) keys.add(rules.carMatch.collectionKey);
   keys.add(SUBCOLLECTION_KEY);
   return [...keys];
 }
@@ -379,6 +399,8 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
   if (conditions.length === 0) errors.push("Musí existovat alespoň jedna podmínka.");
 
   const sorting = parseSortSettings(obj.sorting, errors);
+  const carMatch = parseCarMatch(obj.carMatch, errors);
+  const removal = parseRemoval(obj.removal);
 
   const rawVendors = Array.isArray(obj.excludedVendors) ? obj.excludedVendors : [];
   const excludedVendors = [
@@ -391,6 +413,8 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
       collectionFilter: { key: filterKey, value: filterValue },
       conditions,
       excludedVendors,
+      carMatch,
+      removal,
       sorting,
     },
     errors,
@@ -415,4 +439,29 @@ function parseSortSettings(input: unknown, errors: string[]): SortSettings {
     collectionMatchKey: key("collectionMatchKey", "auto na kolekci"),
     tag: String(obj.tag ?? "").trim(),
   };
+}
+
+const isOn = (value: unknown) => value === true || value === "true" || value === "on";
+
+function parseCarMatch(input: unknown, errors: string[]): CarMatchSettings {
+  // Rules saved before this setting existed get the defaults.
+  if (input === undefined || input === null) return structuredClone(DEFAULT_RULE_SET.carMatch);
+  const obj = { ...DEFAULT_RULE_SET.carMatch, ...(input as object) } as Record<string, unknown>;
+  const key = (name: "productKey" | "collectionKey", label: string) => {
+    const value = String(obj[name] ?? "").trim();
+    if (!METAFIELD_KEY.test(value)) errors.push(`Neplatné metapole pro shodu auta (${label}): "${value}"`);
+    return value;
+  };
+  const rawVendors = Array.isArray(obj.vendors) ? obj.vendors : [];
+  return {
+    vendors: [...new Set(rawVendors.map((v) => String(v).trim()).filter((v) => v !== ""))],
+    productKey: key("productKey", "auta na produktu"),
+    collectionKey: key("collectionKey", "auto kolekce"),
+  };
+}
+
+function parseRemoval(input: unknown): RemovalSettings {
+  if (input === undefined || input === null) return { ...DEFAULT_RULE_SET.removal };
+  const obj = input as Record<string, unknown>;
+  return { enabled: isOn(obj.enabled), nightly: isOn(obj.nightly) };
 }
