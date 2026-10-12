@@ -58,6 +58,7 @@ model Job {
   updatedAt DateTime @updatedAt
 
   @@index([shop, createdAt])
+  @@index([shop, type, status])
 }
 
 /** CSV produced by the export-plan job, downloaded from the app. */
