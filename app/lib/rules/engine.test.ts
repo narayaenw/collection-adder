@@ -241,6 +241,12 @@ describe("car match vendors", () => {
     expect(createMatcher([bmw], DEFAULT_RULE_SET)(racing('["Audi"]'))).toEqual([]);
   });
 
+  it("lets Racing Line and Aftermarket cars into every matching collection", () => {
+    const racing = (cars: string) => wheel({ vendor: "Racing Line", "custom.auto": cars });
+    expect(matchingCollectionIds(racing('["Audi","Racing Line"]'), [bmw], DEFAULT_RULE_SET)).toEqual([bmw.id]);
+    expect(createMatcher([bmw], DEFAULT_RULE_SET)(racing('["aftermarket"]'))).toEqual([bmw.id]);
+  });
+
   it("leaves other vendors alone", () => {
     expect(createMatcher([bmw], DEFAULT_RULE_SET)(wheel({ "custom.auto": '["Audi"]' }))).toEqual([bmw.id]);
   });

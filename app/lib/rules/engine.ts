@@ -180,9 +180,20 @@ export function needsCarMatch(product: ProductSnapshot, rules: RuleSet): boolean
   return rules.carMatch.vendors.some((v) => normalizeText(v) === vendor);
 }
 
+/**
+ * Cars the product is limited to, or null when it may go to any collection: its vendor is not
+ * limited, or its car list holds one of the "any car" values.
+ */
+function limitedCars(product: ProductSnapshot, rules: RuleSet): string[] | null {
+  if (!needsCarMatch(product, rules)) return null;
+  const cars = parse(product.fields[rules.carMatch.productKey]).keys;
+  const any = rules.carMatch.anyCarValues.map(equalityKey);
+  return hasCommonKey(cars, any) ? null : cars;
+}
+
 function carMatches(product: ProductSnapshot, collection: CollectionSnapshot, rules: RuleSet): boolean {
-  const { productKey, collectionKey } = rules.carMatch;
-  return hasCommonKey(parse(product.fields[productKey]).keys, parse(collection.fields[collectionKey]).keys);
+  const cars = limitedCars(product, rules);
+  return cars === null || hasCommonKey(cars, parse(collection.fields[rules.carMatch.collectionKey]).keys);
 }
 
 export function isRuleCollection(collection: CollectionSnapshot, rules: RuleSet): boolean {
@@ -197,7 +208,7 @@ export function productMatchesCollection(
 ): boolean {
   if (rules.conditions.length === 0) return false;
   if (isVendorExcluded(product, rules)) return false;
-  if (needsCarMatch(product, rules) && !carMatches(product, collection, rules)) return false;
+  if (!carMatches(product, collection, rules)) return false;
   return rules.conditions.every((c) => evaluateCondition(c, product.fields, collection.fields));
 }
 
@@ -242,7 +253,7 @@ export function createMatcher(collections: CollectionSnapshot[], rules: RuleSet)
   return (product: ProductSnapshot): string[] => {
     if (conditions.length === 0 || isVendorExcluded(product, rules)) return [];
     const productValues = conditions.map((c) => parse(product.fields[c.productField]));
-    const cars = needsCarMatch(product, rules) ? parse(product.fields[rules.carMatch.productKey]).keys : null;
+    const cars = limitedCars(product, rules);
     if (cars && cars.length === 0) return [];
 
     let candidates: (typeof prepared)[number][] = prepared;
@@ -452,9 +463,11 @@ function parseCarMatch(input: unknown, errors: string[]): CarMatchSettings {
     if (!METAFIELD_KEY.test(value)) errors.push(`Neplatné metapole pro shodu auta (${label}): "${value}"`);
     return value;
   };
-  const rawVendors = Array.isArray(obj.vendors) ? obj.vendors : [];
+  const list = (raw: unknown) =>
+    [...new Set((Array.isArray(raw) ? raw : []).map((v) => String(v).trim()).filter((v) => v !== ""))];
   return {
-    vendors: [...new Set(rawVendors.map((v) => String(v).trim()).filter((v) => v !== ""))],
+    vendors: list(obj.vendors),
+    anyCarValues: list(obj.anyCarValues),
     productKey: key("productKey", "auta na produktu"),
     collectionKey: key("collectionKey", "auto kolekce"),
   };

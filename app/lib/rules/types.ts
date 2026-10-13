@@ -53,6 +53,8 @@ export interface CarMatchSettings {
   vendors: string[];
   productKey: string;
   collectionKey: string;
+  /** Product car values that lift the condition: such products go to every matching collection. */
+  anyCarValues: string[];
 }
 
 /** Removing products that no longer match from rule collections. */
@@ -135,6 +137,7 @@ export const DEFAULT_RULE_SET: RuleSet = {
     vendors: ["Racing Line"],
     productKey: "custom.auto",
     collectionKey: "ymm.znacka",
+    anyCarValues: ["Racing Line", "Aftermarket"],
   },
   removal: { enabled: false, nightly: true },
   sorting: {

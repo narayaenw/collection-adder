@@ -40,6 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       vendors: String(form.get("carMatchVendors") ?? "").split(/\r?\n|,/),
       productKey: form.get("carMatchProductKey"),
       collectionKey: form.get("carMatchCollectionKey"),
+      anyCarValues: String(form.get("carMatchAnyCar") ?? "").split(/\r?\n|,/),
     },
     removal: {
       enabled: form.get("removalEnabled") === "on",
@@ -216,13 +217,20 @@ export default function Settings() {
           <s-stack direction="block" gap="base">
             <s-paragraph>
               Produkty těchto výrobců se přidají jen do kolekcí, jejichž auto je v seznamu aut
-              produktu. Produkt bez vyplněných aut se nepřidá nikam.
+              produktu. Produkt bez vyplněných aut se nepřidá nikam. Když seznam aut obsahuje
+              některou z hodnot „bez omezení“, produkt jde do všech kolekcí podle pravidel.
             </s-paragraph>
             <s-text-area
               name="carMatchVendors"
               label="Výrobci (jeden na řádek)"
               value={shown.carMatch.vendors.join("\n")}
               rows={3}
+            />
+            <s-text-area
+              name="carMatchAnyCar"
+              label="Auta bez omezení (jedno na řádek)"
+              value={shown.carMatch.anyCarValues.join("\n")}
+              rows={2}
             />
             <s-grid gridTemplateColumns="1fr 1fr" gap="base">
               <s-text-field
