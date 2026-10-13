@@ -144,7 +144,7 @@ export const DEFAULT_RULE_SET: RuleSet = {
     enabled: true,
     rankKey: "custom.rank",
     productSizeKey: "custom.size",
-    collectionSizeKey: "custom.original_size",
+    collectionSizeKey: "custom.oe_size",
     productMatchKey: "custom.auto",
     collectionMatchKey: "ymm.znacka",
     tag: "_TIP",

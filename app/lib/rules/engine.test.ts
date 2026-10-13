@@ -265,3 +265,13 @@ describe("car match vendors", () => {
     expect(rules?.removal).toEqual({ enabled: false, nightly: true });
   });
 });
+
+describe("sort settings", () => {
+  it("moves a saved original_size key to the OE size list", () => {
+    const { rules } = parseRuleSet({
+      ...DEFAULT_RULE_SET,
+      sorting: { ...DEFAULT_RULE_SET.sorting, collectionSizeKey: "custom.original_size" },
+    });
+    expect(rules?.sorting.collectionSizeKey).toBe("custom.oe_size");
+  });
+});

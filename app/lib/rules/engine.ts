@@ -436,6 +436,8 @@ function parseSortSettings(input: unknown, errors: string[]): SortSettings {
   // Rules saved before sorting existed get the defaults.
   if (input === undefined || input === null) return { ...DEFAULT_RULE_SET.sorting };
   const obj: Record<string, unknown> = { ...DEFAULT_RULE_SET.sorting, ...(input as object) };
+  // The collection's original size moved to the OE size list (Adam, 2026-10-13).
+  if (obj.collectionSizeKey === "custom.original_size") obj.collectionSizeKey = DEFAULT_RULE_SET.sorting.collectionSizeKey;
   const key = (name: Exclude<keyof SortSettings, "enabled" | "tag">, label: string) => {
     const value = String(obj[name] ?? "").trim();
     if (!METAFIELD_KEY.test(value)) errors.push(`Neplatné metapole pro řazení (${label}): "${value}"`);

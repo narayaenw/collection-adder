@@ -299,9 +299,9 @@ export default function Settings() {
               />
               <s-text-field
                 name="sortCollectionSizeKey"
-                label="Původní rozměr kolekce"
+                label="OE rozměry kolekce (seznam)"
                 value={shown.sorting.collectionSizeKey}
-                placeholder="custom.original_size"
+                placeholder="custom.oe_size"
               />
               <s-text-field
                 name="sortProductMatchKey"

@@ -52,7 +52,7 @@ describe("desiredOrder", () => {
       product("d", "8", [], [], "16"),
       product("e", "3", [], ["_TIP"], "17.0"),
     ];
-    expect(desiredOrder(products, { "ymm.znacka": "Škoda", "custom.original_size": "17" }, settings)).toEqual(
+    expect(desiredOrder(products, { "ymm.znacka": "Škoda", "custom.oe_size": "17" }, settings)).toEqual(
       ["c", "e", "b", "a", "d"],
     );
   });
@@ -96,5 +96,15 @@ describe("reorderMoves", () => {
     expect(reorderMoves(["a", "b", "c", "n"], ["n", "a", "b", "c"])).toEqual([
       { id: "n", newPosition: "0" },
     ]);
+  });
+});
+
+describe("OE size list", () => {
+  it("puts products with any of the collection's OE sizes first", () => {
+    const products = [
+      { id: "a", fields: { "custom.size": "16" } },
+      { id: "b", fields: { "custom.size": "18" } },
+    ];
+    expect(desiredOrder(products, { "custom.oe_size": '["17","18"]' }, DEFAULT_RULE_SET.sorting)).toEqual(["b", "a"]);
   });
 });
