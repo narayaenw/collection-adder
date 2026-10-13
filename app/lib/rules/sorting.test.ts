@@ -107,4 +107,13 @@ describe("OE size list", () => {
     ];
     expect(desiredOrder(products, { "custom.oe_size": '["17","18"]' }, DEFAULT_RULE_SET.sorting)).toEqual(["b", "a"]);
   });
+
+  it("compares the rim diameter of sizes like 8Jx20 ET24", () => {
+    const products = [
+      { id: "a", fields: { "custom.size": "19" } },
+      { id: "b", fields: { "custom.size": "20" } },
+    ];
+    const collection = { "custom.oe_size": '["7.5Jx18 ET30","8Jx20 ET24"]' };
+    expect(desiredOrder(products, collection, DEFAULT_RULE_SET.sorting)).toEqual(["b", "a"]);
+  });
 });

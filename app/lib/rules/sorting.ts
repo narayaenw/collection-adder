@@ -12,6 +12,12 @@ export interface Move {
   newPosition: string;
 }
 
+/** Rim diameter from an OE size like "8Jx20 ET24" (20); other values stay as they are. */
+export function rimDiameter(value: string): string {
+  const match = /x\s*(\d+(?:[.,]\d+)?)/i.exec(value);
+  return match ? match[1] : value;
+}
+
 const hasAny = (raw: string | null | undefined, keys: Set<string>) =>
   toList(raw).some((value) => keys.has(equalityKey(value)));
 
@@ -48,7 +54,7 @@ export function desiredOrder(
 ): string[] {
   const keys = (raw: string | null | undefined) => new Set(toList(raw).map(equalityKey));
   const target = {
-    sizes: keys(collection[settings.collectionSizeKey]),
+    sizes: new Set(toList(collection[settings.collectionSizeKey]).map((v) => equalityKey(rimDiameter(v)))),
     cars: keys(collection[settings.collectionMatchKey]),
   };
   return products
