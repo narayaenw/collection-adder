@@ -86,7 +86,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     [...new Set(targets.filter((id): id is string => id !== null))],
   );
   const exportJobIds = jobs
-    .filter((j) => ["export-plan", "export-rule-groups", "remove-smart-rules"].includes(j.type) && j.status === "done").map((j) => j.id);
+    .filter((j) => ["export-plan", "export-rule-groups", "remove-smart-rules", "recalc-inner-outer", "recount-inner-outer"].includes(j.type) && j.status === "done").map((j) => j.id);
   const exportFiles = await db.exportFile.findMany({
     where: { shop, OR: exportJobIds.map((id) => ({ id: { startsWith: `${id}-` } })) },
     select: { id: true },
@@ -183,6 +183,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "remove-smart-rules":
       await enqueueJob(shop, "remove-smart-rules");
       return { message: "Mazání pravidel spuštěno, výsledek uvidíte v seznamu úloh." };
+    case "recalc-inner-outer": {
+      const write = form.get("write") === "1";
+      await enqueueJob(shop, "recalc-inner-outer", { write });
+      return {
+        message: write
+          ? "Přepočet inner/outer spuštěn, pravidla se zapíšou."
+          : "Přepočet inner/outer nanečisto spuštěn, CSV bude v seznamu úloh.",
+      };
+    }
+    case "recount-inner-outer":
+      await enqueueJob(shop, "recount-inner-outer");
+      return { message: "Porovnání počtů produktů spuštěno, CSV bude v seznamu úloh." };
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -234,6 +246,8 @@ const JOB_LABELS: Record<string, string> = {
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
   "remove-smart-rules": "Smazání pravidel smart kolekcí",
+  "recalc-inner-outer": "Přepočet inner/outer",
+  "recount-inner-outer": "Počty produktů po přepočtu",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
@@ -400,6 +414,28 @@ export default function Index() {
           <s-button tone="critical" onClick={() => submit("remove-smart-rules")} disabled={busy}>
             Smazat pravidla
           </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Přepočet inner/outer (YMM_automat)">
+        <s-stack gap="base">
+          <s-paragraph>
+            Smart kolekcím s účelem YMM_automat přepočítá podmínky inner_mm a outer_mm z rozměrů
+            original_size a aftermarket_size (největší hodnota + 2 mm). Nanečisto jen vytvoří CSV
+            starých a nových hodnot a počtem produktů před změnou. Po zápisu chvíli počkejte, než
+            Shopify kolekce přepočítá, a pak spusťte porovnání počtů (před, po, rozdíl).
+          </s-paragraph>
+          <s-stack direction="inline" gap="base">
+            <s-button onClick={() => submit("recalc-inner-outer")} disabled={busy}>
+              Nanečisto (CSV)
+            </s-button>
+            <s-button tone="critical" onClick={() => fetcher.submit({ intent: "recalc-inner-outer", write: "1" }, { method: "POST" })} disabled={busy}>
+              Zapsat do pravidel
+            </s-button>
+            <s-button onClick={() => submit("recount-inner-outer")} disabled={busy}>
+              Porovnat počty produktů
+            </s-button>
+          </s-stack>
         </s-stack>
       </s-section>
 

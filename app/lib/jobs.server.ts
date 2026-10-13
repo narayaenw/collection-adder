@@ -11,6 +11,7 @@ import {
   productSearchQuery,
 } from "./rules/engine";
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
+import { innerOuter, parseSizes } from "./rules/innerOuter";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
 import { cleanCollection } from "./removal.server";
 import { getRules } from "./settings.server";
@@ -209,6 +210,75 @@ const COLLECTION_DELETE_SOURCES = `#graphql
       userErrors { field message }
     }
   }`;
+
+/** Collections whose rules get inner/outer recomputed (collection metafield custom.ucel). */
+const INNER_OUTER_MARKER = "YMM_automat";
+const INNER_OUTER_TOLERANCE_MM = 2;
+/** A run hands the rest to a follow-up job before the 30-minute job timeout. */
+const INNER_OUTER_TIME_BUDGET_MS = 20 * 60 * 1000;
+
+const INNER_OUTER_PAGE = `#graphql
+  query InnerOuterCollections($after: String) {
+    collections(first: 50, after: $after, query: "collection_type:smart", sortKey: ID) {
+      nodes {
+        id
+        title
+        productsCount { count }
+        marker: metafield(namespace: "custom", key: "ucel") { value }
+        original: metafield(namespace: "custom", key: "original_size") { value }
+        aftermarket: metafield(namespace: "custom", key: "aftermarket_size") { value }
+        ruleSet {
+          appliedDisjunctively
+          rules {
+            column
+            relation
+            condition
+            conditionObject {
+              ... on CollectionRuleMetafieldCondition { metafieldDefinition { id namespace key } }
+            }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+const COLLECTION_UPDATE_RULES = `#graphql
+  mutation CollectionUpdateRules($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
+      collection { id }
+      userErrors { field message }
+    }
+  }`;
+
+const COLLECTION_COUNTS = `#graphql
+  query CollectionCounts($ids: [ID!]!) {
+    nodes(ids: $ids) { ... on Collection { id productsCount { count } } }
+  }`;
+
+/** Splits one line of the CSVs written here (quoted cells may hold commas and doubled quotes). */
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"' && line[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { cells.push(cell); cell = ""; }
+    else cell += c;
+  }
+  cells.push(cell);
+  return cells;
+}
+
+const ruleKey = (rule: any) => {
+  const d = rule.conditionObject?.metafieldDefinition;
+  return d ? `${d.namespace}.${d.key}` : null;
+};
 
 const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) => Promise<string>> = {
   async "sync-collections"(shop) {
@@ -412,6 +482,138 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     });
     return `Pravidla smazána u ${removed} kolekcí, přeskočeno ${skipped} bez značky ${collectionFilter.value}. ` +
       "Smazaná pravidla jsou v CSV.";
+  },
+
+  /**
+   * One-off: recomputes the inner_mm and outer_mm conditions of YMM_automat smart collections
+   * from their original and aftermarket sizes (largest reach + tolerance). Without `write` it
+   * only produces the CSV of old and new values. Long runs continue in follow-up jobs that add
+   * CSV parts under the first job.
+   */
+  async "recalc-inner-outer"(shop, payload, jobId) {
+    const admin = await adminFor(shop);
+    const write = payload.write === true;
+    const runId: string = payload.runId ?? jobId;
+    const part: number = payload.part ?? 1;
+    const started = Date.now();
+    const lines: string[] = [];
+    const counts = { changed: 0, same: 0, skipped: 0 };
+    let after: string | null = payload.after ?? null;
+    do {
+      const data: any = await gql(admin, INNER_OUTER_PAGE, { after });
+      for (const node of data.collections.nodes) {
+        if (node.marker?.value !== INNER_OUTER_MARKER) continue;
+        const sizesText = [node.original?.value, node.aftermarket?.value].filter(Boolean).join("|");
+        const target = innerOuter(parseSizes(sizesText), INNER_OUTER_TOLERANCE_MM);
+        const rules: any[] = node.ruleSet?.rules ?? [];
+        const inner = rules.find((r) => ruleKey(r) === "custom.inner_mm");
+        const outer = rules.find((r) => ruleKey(r) === "custom.outer_mm");
+        let status: string;
+        if (!target) status = "bez rozměrů";
+        else if (!inner || !outer) status = "chybí pravidlo inner/outer";
+        else if (Number(inner.condition) === target.inner && Number(outer.condition) === target.outer) status = "beze změny";
+        else status = write ? "změněno" : "změní se";
+        if (target && inner && outer && status !== "beze změny" && write) {
+          const result: any = await gql(admin, COLLECTION_UPDATE_RULES, {
+            input: {
+              id: node.id,
+              ruleSet: {
+                appliedDisjunctively: node.ruleSet.appliedDisjunctively,
+                rules: rules.map((r) => ({
+                  column: r.column,
+                  relation: r.relation,
+                  condition:
+                    r === inner ? String(target.inner) : r === outer ? String(target.outer) : r.condition,
+                  ...(r.conditionObject?.metafieldDefinition
+                    ? { conditionObjectId: r.conditionObject.metafieldDefinition.id }
+                    : {}),
+                })),
+              },
+            },
+          });
+          assertNoUserErrors("collectionUpdate", result.collectionUpdate.userErrors);
+        }
+        if (status === "beze změny") counts.same++;
+        else if (status === "změněno" || status === "změní se") counts.changed++;
+        else counts.skipped++;
+        lines.push(
+          [
+            numericId(node.id),
+            csvCell(node.title),
+            csvCell(sizesText),
+            node.productsCount?.count ?? "",
+            inner?.condition ?? "",
+            target?.inner ?? "",
+            outer?.condition ?? "",
+            target?.outer ?? "",
+            status,
+          ].join(","),
+        );
+      }
+      after = data.collections.pageInfo.hasNextPage ? data.collections.pageInfo.endCursor : null;
+    } while (after && Date.now() - started < INNER_OUTER_TIME_BUDGET_MS);
+
+    await db.exportFile.deleteMany({ where: { id: `${runId}-${part}` } });
+    await db.exportFile.create({
+      data: {
+        id: `${runId}-${part}`,
+        shop,
+        csv: ["collection_id,collection_title,sizes,products_before,old_inner,new_inner,old_outer,new_outer,status", ...lines].join("\n"),
+      },
+    });
+    if (after) await enqueueJob(shop, "recalc-inner-outer", { write, runId, part: part + 1, after });
+    return `${write ? "Zapsáno" : "Nanečisto"}: ${write ? "změněno" : "ke změně"} ${counts.changed}, ` +
+      `beze změny ${counts.same}, přeskočeno ${counts.skipped}.` +
+      (after ? " Pokračuje další úlohou, CSV části přibývají u první úlohy." : "");
+  },
+
+  /**
+   * Compares the product counts of the collections changed by the last written inner/outer run
+   * with the counts recorded before the change. Shopify updates smart collections in the
+   * background, so this runs as a separate step some time after the write.
+   */
+  async "recount-inner-outer"(shop, _payload, jobId) {
+    const admin = await adminFor(shop);
+    const runs = await db.job.findMany({
+      where: { shop, type: "recalc-inner-outer", status: "done" },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    const run = runs.find((j) => (j.payload as Payload)?.write === true && !(j.payload as Payload)?.runId);
+    if (!run) return "Žádný zapsaný přepočet inner/outer.";
+    const files = await db.exportFile.findMany({
+      where: { shop, id: { startsWith: `${run.id}-` } },
+      orderBy: { createdAt: "asc" },
+    });
+    const rows = files
+      .flatMap((f) => f.csv.split("\n").slice(1))
+      .map(parseCsvLine)
+      .filter((r) => r[8] === "změněno");
+    const lines: string[] = [];
+    let total = { before: 0, after: 0 };
+    for (const batch of chunk(rows, 100)) {
+      const data: any = await gql(admin, COLLECTION_COUNTS, {
+        ids: batch.map((r) => `gid://shopify/Collection/${r[0]}`),
+      });
+      batch.forEach((r, i) => {
+        const before = Number(r[3]);
+        const after = data.nodes[i]?.productsCount?.count ?? 0;
+        total = { before: total.before + before, after: total.after + after };
+        lines.push([r[0], csvCell(r[1]), r[4], r[5], r[6], r[7], before, after, after - before].join(","));
+      });
+    }
+    await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
+    await db.exportFile.create({
+      data: {
+        id: `${jobId}-1`,
+        shop,
+        csv: [
+          "collection_id,collection_title,old_inner,new_inner,old_outer,new_outer,products_before,products_after,difference",
+          ...lines,
+        ].join("\n"),
+      },
+    });
+    return `${rows.length} kolekcí: produktů před ${total.before}, po ${total.after} (rozdíl ${total.after - total.before}).`;
   },
 
   async "sort-collection"(shop, payload) {
