@@ -164,6 +164,52 @@ const EXPORT_ROWS_PER_FILE = 500_000;
 
 const numericId = (gid: string) => gid.split("/").pop()!;
 
+/** Oldest smart collection created after 2026-10-01; rules are removed from this one and newer. */
+const REMOVE_RULES_FROM_ID = "724501135628";
+
+/**
+ * Admin client on API 2026-07, which can delete a collection's conditions source. The rest of
+ * the app stays on the configured version, where a smart collection's rules can't be removed.
+ */
+async function adminFor202607(shop: string): Promise<AdminClient> {
+  return {
+    graphql: async (query, options) => {
+      const { session } = await unauthenticated.admin(shop);
+      return fetch(`https://${session.shop}/admin/api/2026-07/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken ?? "" },
+        body: JSON.stringify({ query, variables: options?.variables }),
+      });
+    },
+  };
+}
+
+const SMART_COLLECTIONS_PAGE = `#graphql
+  query SmartCollections($query: String!, $after: String, $namespace: String!, $key: String!) {
+    collections(first: 100, after: $after, query: $query, sortKey: ID, reverse: true) {
+      nodes {
+        id
+        title
+        marker: metafield(namespace: $namespace, key: $key) { value }
+        ruleSet { appliedDisjunctively rules { column relation condition } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+const COLLECTION_SOURCES = `#graphql
+  query CollectionSources($id: ID!) {
+    collection(id: $id) { sources { __typename id } }
+  }`;
+
+const COLLECTION_DELETE_SOURCES = `#graphql
+  mutation CollectionDeleteSources($collection: CollectionUpdateInput!) {
+    collectionUpdate(collection: $collection) {
+      collection { id }
+      userErrors { field message }
+    }
+  }`;
+
 const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) => Promise<string>> = {
   async "sync-collections"(shop) {
     const admin = await adminFor(shop);
@@ -315,6 +361,57 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const parents = new Set(rows.map((r) => r.parentId));
     const children = [...parents].reduce((sum, id) => sum + rows.find((r) => r.parentId === id)!.childCount, 0);
     return `Report: ${parents.size} nadřazených kolekcí, ${children} podkolekcí, ${rows.length} různých kombinací pravidel.`;
+  },
+
+  /**
+   * One-off: deletes the conditions (rules) of rule-marked smart collections created after
+   * 2026-10-01, newest first. The removed rules are saved as a CSV in the job list.
+   */
+  async "remove-smart-rules"(shop, _payload, jobId) {
+    const admin = await adminFor(shop);
+    const admin202607 = await adminFor202607(shop);
+    const { collectionFilter } = await getRules(shop);
+    const lines: string[] = [];
+    let removed = 0;
+    let skipped = 0;
+    let after: string | null = null;
+    do {
+      const data: any = await gql(admin, SMART_COLLECTIONS_PAGE, {
+        query: `collection_type:smart AND id:>=${REMOVE_RULES_FROM_ID}`,
+        after,
+        namespace: collectionFilter.key.slice(0, collectionFilter.key.indexOf(".")),
+        key: collectionFilter.key.slice(collectionFilter.key.indexOf(".") + 1),
+      });
+      for (const node of data.collections.nodes) {
+        if (node.marker?.value !== collectionFilter.value) {
+          skipped++;
+          continue;
+        }
+        const sources: any = await gql(admin202607, COLLECTION_SOURCES, { id: node.id });
+        const ids = (sources.collection?.sources ?? [])
+          .filter((s: any) => s.__typename === "CollectionConditionsSource")
+          .map((s: any) => s.id as string);
+        if (ids.length === 0) continue;
+        const rules = (node.ruleSet?.rules ?? [])
+          .map((r: any) => `${r.column} ${r.relation} ${r.condition}`)
+          .join("; ");
+        const match = node.ruleSet?.appliedDisjunctively ? "ANY" : "ALL";
+        console.log(JSON.stringify({ removeSmartRules: { id: node.id, title: node.title, match, rules } }));
+        const result: any = await gql(admin202607, COLLECTION_DELETE_SOURCES, {
+          collection: { id: node.id, sourcesToDelete: ids },
+        });
+        assertNoUserErrors("collectionUpdate", result.collectionUpdate.userErrors);
+        lines.push([numericId(node.id), csvCell(node.title), match, csvCell(rules)].join(","));
+        removed++;
+      }
+      after = data.collections.pageInfo.hasNextPage ? data.collections.pageInfo.endCursor : null;
+    } while (after);
+    await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
+    await db.exportFile.create({
+      data: { id: `${jobId}-1`, shop, csv: ["collection_id,collection_title,match,rules", ...lines].join("\n") },
+    });
+    return `Pravidla smazána u ${removed} kolekcí, přeskočeno ${skipped} bez značky ${collectionFilter.value}. ` +
+      "Smazaná pravidla jsou v CSV.";
   },
 
   async "sort-collection"(shop, payload) {

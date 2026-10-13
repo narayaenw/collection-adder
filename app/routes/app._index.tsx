@@ -86,7 +86,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     [...new Set(targets.filter((id): id is string => id !== null))],
   );
   const exportJobIds = jobs
-    .filter((j) => (j.type === "export-plan" || j.type === "export-rule-groups") && j.status === "done").map((j) => j.id);
+    .filter((j) => ["export-plan", "export-rule-groups", "remove-smart-rules"].includes(j.type) && j.status === "done").map((j) => j.id);
   const exportFiles = await db.exportFile.findMany({
     where: { shop, OR: exportJobIds.map((id) => ({ id: { startsWith: `${id}-` } })) },
     select: { id: true },
@@ -180,6 +180,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : "Kontrola nanečisto spuštěna, nic se neodebere.",
       };
     }
+    case "remove-smart-rules":
+      await enqueueJob(shop, "remove-smart-rules");
+      return { message: "Mazání pravidel spuštěno, výsledek uvidíte v seznamu úloh." };
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
@@ -230,6 +233,7 @@ const JOB_LABELS: Record<string, string> = {
   "export-plan": "Export plánu",
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
+  "remove-smart-rules": "Smazání pravidel smart kolekcí",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
@@ -383,6 +387,18 @@ export default function Index() {
           </s-paragraph>
           <s-button onClick={() => submit("export-rule-groups")} disabled={busy}>
             Spustit report
+          </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Smazat pravidla nových smart kolekcí">
+        <s-stack gap="base">
+          <s-paragraph>
+            Jednorázově smaže pravidla (podmínky) smart kolekcím se značkou účelu, které vznikly
+            po 1. 10. 2026. Produkty přidané pravidly z nich zmizí. Smazaná pravidla budou v CSV.
+          </s-paragraph>
+          <s-button tone="critical" onClick={() => submit("remove-smart-rules")} disabled={busy}>
+            Smazat pravidla
           </s-button>
         </s-stack>
       </s-section>

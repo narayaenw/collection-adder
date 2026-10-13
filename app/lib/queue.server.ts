@@ -14,7 +14,8 @@ export type JobType =
   | "export-plan"
   | "export-rule-groups"
   | "remove-unmatched"
-  | "clean-collection";
+  | "clean-collection"
+  | "remove-smart-rules";
 
 let tasksClient: CloudTasksClient | undefined;
 
