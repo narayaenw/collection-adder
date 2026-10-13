@@ -77,6 +77,10 @@ export interface SortSettings {
   rankKey: string;
   /** Product metafield with the wheel size, compared with `collectionSizeKey`. */
   productSizeKey: string;
+  /** Product metafield with the rim width, compared with the OE sizes' width ("8J"). */
+  productWidthKey: string;
+  /** Product (list) metafield with the ET values, compared with the OE sizes' ET. */
+  productEtKey: string;
   /** Collection metafield with the car's original wheel size. */
   collectionSizeKey: string;
   /** Product list metafield with the cars the wheel is designed for. */
@@ -144,6 +148,8 @@ export const DEFAULT_RULE_SET: RuleSet = {
     enabled: true,
     rankKey: "custom.rank",
     productSizeKey: "custom.size",
+    productWidthKey: "custom.width",
+    productEtKey: "custom.ett2",
     collectionSizeKey: "custom.oe_size",
     productMatchKey: "custom.auto",
     collectionMatchKey: "ymm.znacka",

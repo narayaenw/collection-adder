@@ -12,10 +12,39 @@ export interface Move {
   newPosition: string;
 }
 
-/** Rim diameter from an OE size like "8Jx20 ET24" (20); other values stay as they are. */
-export function rimDiameter(value: string): string {
-  const match = /x\s*(\d+(?:[.,]\d+)?)/i.exec(value);
-  return match ? match[1] : value;
+export interface WheelSize {
+  width: number | null;
+  diameter: number;
+  et: number | null;
+}
+
+/**
+ * Parses an OE size like "8Jx20 ET24" (width 8, diameter 20, ET 24). A plain "20" is just a
+ * diameter. Returns null for anything else.
+ */
+export function parseWheelSize(value: string): WheelSize | null {
+  const num = (raw: string | undefined) => (raw === undefined ? null : toNumber(raw));
+  const full = /(\d+(?:[.,]\d+)?)\s*J?\s*x\s*(\d+(?:[.,]\d+)?)(?:.*?ET\s*([-+]?\d+(?:[.,]\d+)?))?/i.exec(value);
+  if (full) return { width: num(full[1]), diameter: num(full[2])!, et: num(full[3]) };
+  const diameter = toNumber(value);
+  return diameter === null ? null : { width: null, diameter, et: null };
+}
+
+const numbers = (raw: string | null | undefined) =>
+  toList(raw).map(toNumber).filter((n): n is number => n !== null);
+
+/** Whether the product has one of the sizes: width, diameter and ET all equal (where given). */
+function hasSize(product: SortProduct, sizes: WheelSize[], settings: SortSettings): boolean {
+  if (sizes.length === 0) return false;
+  const diameters = numbers(product.fields[settings.productSizeKey]);
+  const widths = numbers(product.fields[settings.productWidthKey]);
+  const ets = numbers(product.fields[settings.productEtKey]);
+  return sizes.some(
+    (s) =>
+      diameters.includes(s.diameter) &&
+      (s.width === null || widths.includes(s.width)) &&
+      (s.et === null || ets.includes(s.et)),
+  );
 }
 
 const hasAny = (raw: string | null | undefined, keys: Set<string>) =>
@@ -26,10 +55,10 @@ const hasAny = (raw: string | null | undefined, keys: Set<string>) =>
  */
 export function sortGroup(
   product: SortProduct,
-  collection: { sizes: Set<string>; cars: Set<string> },
+  collection: { sizes: WheelSize[]; cars: Set<string> },
   settings: SortSettings,
 ): number {
-  const size = hasAny(product.fields[settings.productSizeKey], collection.sizes);
+  const size = hasSize(product, collection.sizes, settings);
   const car = hasAny(product.fields[settings.productMatchKey], collection.cars);
   if (size) return car ? 0 : 1;
   if (car) return 2;
@@ -54,7 +83,9 @@ export function desiredOrder(
 ): string[] {
   const keys = (raw: string | null | undefined) => new Set(toList(raw).map(equalityKey));
   const target = {
-    sizes: new Set(toList(collection[settings.collectionSizeKey]).map((v) => equalityKey(rimDiameter(v)))),
+    sizes: toList(collection[settings.collectionSizeKey])
+      .map(parseWheelSize)
+      .filter((s): s is WheelSize => s !== null),
     cars: keys(collection[settings.collectionMatchKey]),
   };
   return products

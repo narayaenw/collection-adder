@@ -50,6 +50,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       enabled: form.get("sortEnabled") === "on",
       rankKey: form.get("sortRankKey"),
       productSizeKey: form.get("sortProductSizeKey"),
+      productWidthKey: form.get("sortProductWidthKey"),
+      productEtKey: form.get("sortProductEtKey"),
       collectionSizeKey: form.get("sortCollectionSizeKey"),
       productMatchKey: form.get("sortProductMatchKey"),
       collectionMatchKey: form.get("sortCollectionMatchKey"),
@@ -293,9 +295,21 @@ export default function Settings() {
               />
               <s-text-field
                 name="sortProductSizeKey"
-                label="Rozměr produktu"
+                label="Průměr produktu"
                 value={shown.sorting.productSizeKey}
                 placeholder="custom.size"
+              />
+              <s-text-field
+                name="sortProductWidthKey"
+                label="Šířka produktu"
+                value={shown.sorting.productWidthKey}
+                placeholder="custom.width"
+              />
+              <s-text-field
+                name="sortProductEtKey"
+                label="ET produktu (seznam)"
+                value={shown.sorting.productEtKey}
+                placeholder="custom.ett2"
               />
               <s-text-field
                 name="sortCollectionSizeKey"

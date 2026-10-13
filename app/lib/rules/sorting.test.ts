@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desiredOrder, reorderMoves, type SortProduct } from "./sorting";
+import { desiredOrder, parseWheelSize, reorderMoves, type SortProduct } from "./sorting";
 import { DEFAULT_RULE_SET } from "./types";
 
 const settings = DEFAULT_RULE_SET.sorting;
@@ -108,12 +108,27 @@ describe("OE size list", () => {
     expect(desiredOrder(products, { "custom.oe_size": '["17","18"]' }, DEFAULT_RULE_SET.sorting)).toEqual(["b", "a"]);
   });
 
-  it("compares the rim diameter of sizes like 8Jx20 ET24", () => {
+  it("needs width, diameter and ET of a size like 8Jx20 ET24 to match", () => {
+    const wheel = (id: string, size: string, width: string, ets: string) =>
+      ({ id, fields: { "custom.size": size, "custom.width": width, "custom.ett2": ets } });
     const products = [
-      { id: "a", fields: { "custom.size": "19" } },
-      { id: "b", fields: { "custom.size": "20" } },
+      wheel("diameter only", "20", "9.0", '["24"]'),
+      wheel("wrong et", "20", "8.0", '["35"]'),
+      wheel("exact", "20", "8.0", '["24"]'),
+      wheel("blank et range", "18", "7.5", '["25","30","35"]'),
     ];
     const collection = { "custom.oe_size": '["7.5Jx18 ET30","8Jx20 ET24"]' };
-    expect(desiredOrder(products, collection, DEFAULT_RULE_SET.sorting)).toEqual(["b", "a"]);
+    expect(desiredOrder(products, collection, DEFAULT_RULE_SET.sorting)).toEqual([
+      "exact",
+      "blank et range",
+      "diameter only",
+      "wrong et",
+    ]);
+  });
+
+  it("parses OE sizes", () => {
+    expect(parseWheelSize("8Jx20 ET24")).toEqual({ width: 8, diameter: 20, et: 24 });
+    expect(parseWheelSize("7,5J x 18 ET-5")).toEqual({ width: 7.5, diameter: 18, et: -5 });
+    expect(parseWheelSize("17")).toEqual({ width: null, diameter: 17, et: null });
   });
 });

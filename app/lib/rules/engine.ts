@@ -447,6 +447,8 @@ function parseSortSettings(input: unknown, errors: string[]): SortSettings {
     enabled: obj.enabled === true || obj.enabled === "true" || obj.enabled === "on",
     rankKey: key("rankKey", "rank"),
     productSizeKey: key("productSizeKey", "rozměr na produktu"),
+    productWidthKey: key("productWidthKey", "šířka na produktu"),
+    productEtKey: key("productEtKey", "ET na produktu"),
     collectionSizeKey: key("collectionSizeKey", "rozměr na kolekci"),
     productMatchKey: key("productMatchKey", "auto na produktu"),
     collectionMatchKey: key("collectionMatchKey", "auto na kolekci"),
