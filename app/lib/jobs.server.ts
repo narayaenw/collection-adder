@@ -231,25 +231,38 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     return `Odpovídá ${result.matched} kolekcím, nově přidán do ${result.added}.`;
   },
 
-  async "evaluate-collection"(shop, payload) {
+  async "evaluate-collection"(shop, payload, jobId) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     const { synced } = await syncCollection(admin, shop, rules, payload.collectionId);
     if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
-    // Checking one collection also sorts it, even when nothing new was added.
-    await queueSorting(shop, rules, [payload.collectionId]);
     const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
+    let result: string;
     if (fast.rest.size === 0) {
-      return `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+      result = `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+    } else {
+      const { additions, productCount } = await planAdditions(
+        admin,
+        shop,
+        new Set([payload.collectionId]),
+      );
+      const toAdd = additions.get(payload.collectionId) ?? [];
+      await addProducts(admin, payload.collectionId, toAdd);
+      result = `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
     }
-    const { additions, productCount } = await planAdditions(
-      admin,
-      shop,
-      new Set([payload.collectionId]),
-    );
-    const toAdd = additions.get(payload.collectionId) ?? [];
-    await addProducts(admin, payload.collectionId, toAdd);
-    return `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
+    // With live removal on, products the rules no longer put here are taken out too.
+    if (rules.removal.enabled) {
+      const cleaned = await cleanCollection(admin, shop, rules, {
+        collectionId: payload.collectionId,
+        runId: jobId,
+        remove: true,
+      });
+      result += ` Odebírání: ${cleaned}`;
+    }
+    // Checking one collection also sorts it, even when nothing changed; queued last so the
+    // sort sees the collection after removal.
+    await queueSorting(shop, rules, [payload.collectionId]);
+    return result;
   },
 
   async "evaluate-collections"(shop, payload) {

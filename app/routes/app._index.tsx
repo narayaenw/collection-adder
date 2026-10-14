@@ -304,6 +304,11 @@ export default function Index() {
         {data.pendingSorts > 0 && (
           <s-paragraph>Čeká na seřazení {data.pendingSorts} kolekcí.</s-paragraph>
         )}
+        <s-paragraph>
+          {data.removal.enabled
+            ? "Vyhodnotit kolekci přidá vyhovující produkty a nevyhovující z kolekce odebere (Ostré odebírání je zapnuté)."
+            : "Vyhodnotit kolekci jen přidává vyhovující produkty; odebírá až se zapnutým Ostrým odebíráním."}
+        </s-paragraph>
         <s-stack direction="inline" gap="base">
           <s-button onClick={() => submit("sync")} disabled={busy}>
             Synchronizovat kolekce
