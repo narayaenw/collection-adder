@@ -12,7 +12,7 @@ import {
 } from "./rules/engine";
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
-import { cleanCollection } from "./removal.server";
+import { cleanCollection, cleanOne } from "./removal.server";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -231,28 +231,41 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     return `Odpovídá ${result.matched} kolekcím, nově přidán do ${result.added}.`;
   },
 
-  async "evaluate-collection"(shop, payload) {
+  async "evaluate-collection"(shop, payload, jobId) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     const { synced } = await syncCollection(admin, shop, rules, payload.collectionId);
     if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
-    // Checking one collection also sorts it, even when nothing new was added.
-    await queueSorting(shop, rules, [payload.collectionId]);
     const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
+    let result: string;
     if (fast.rest.size === 0) {
-      return `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+      result = `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+    } else {
+      const { additions, productCount } = await planAdditions(
+        admin,
+        shop,
+        new Set([payload.collectionId]),
+      );
+      const toAdd = additions.get(payload.collectionId) ?? [];
+      await addProducts(admin, payload.collectionId, toAdd);
+      result = `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
     }
-    const { additions, productCount } = await planAdditions(
-      admin,
-      shop,
-      new Set([payload.collectionId]),
-    );
-    const toAdd = additions.get(payload.collectionId) ?? [];
-    await addProducts(admin, payload.collectionId, toAdd);
-    return `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
+    // With live removal on, products the rules no longer put here are taken out too.
+    if (rules.removal.enabled) {
+      const cleaned = await cleanCollection(admin, shop, rules, {
+        collectionId: payload.collectionId,
+        runId: jobId,
+        remove: true,
+      });
+      result += ` Odebírání: ${cleaned}`;
+    }
+    // Checking one collection also sorts it, even when nothing changed; queued last so the
+    // sort sees the collection after removal.
+    await queueSorting(shop, rules, [payload.collectionId]);
+    return result;
   },
 
-  async "evaluate-collections"(shop, payload) {
+  async "evaluate-collections"(shop, payload, jobId) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     const ids = new Set<string>();
@@ -274,11 +287,30 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
         message += ` ${fast.rest.size} kolekcí s podkolekcemi: naplánováno ` +
           `${await queueAdditions(shop, additions)} přiřazení.`;
       }
+      // With live removal on, products the rules no longer put here are taken out too.
+      if (rules.removal.enabled) {
+        let checked = 0;
+        let unmatched = 0;
+        for (const collectionId of ids) {
+          const counts = await cleanOne(admin, shop, rules, { collectionId, runId: jobId, remove: true });
+          if (typeof counts === "string") continue;
+          checked += counts.checked;
+          unmatched += counts.unmatched;
+        }
+        message += ` Odebírání: ${checked} produktů, nevyhovuje a odebráno ${unmatched}.`;
+      }
       return message;
     }
     const { additions, productCount } = await planAdditions(admin, shop, ids);
-    return `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedText}` +
+    let message = `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedText}` +
       `. Naplánováno ${await queueAdditions(shop, additions)} přiřazení.`;
+    if (rules.removal.enabled) {
+      for (const collectionId of ids) {
+        await enqueueJob(shop, "clean-collection", { collectionId, runId: jobId, remove: true });
+      }
+      message += ` Naplánováno odebrání nevyhovujících z ${ids.size} kolekcí.`;
+    }
+    return message;
   },
 
   async "evaluate-all"(shop) {

@@ -40,8 +40,21 @@ export async function cleanCollection(
   admin: AdminClient,
   shop: string,
   rules: RuleSet,
-  { collectionId, runId, remove }: { collectionId: string; runId: string; remove: boolean },
+  options: { collectionId: string; runId: string; remove: boolean },
 ) {
+  const result = await cleanOne(admin, shop, rules, options);
+  if (typeof result === "string") return result;
+  return `${result.checked} produktů, nevyhovuje ${result.unmatched}` +
+    (result.unmatched ? (options.remove ? ", odebráno." : " (jen nanečisto).") : ".");
+}
+
+/** Like cleanCollection, but returns counts (or the reason the collection was skipped). */
+export async function cleanOne(
+  admin: AdminClient,
+  shop: string,
+  rules: RuleSet,
+  { collectionId, runId, remove }: { collectionId: string; runId: string; remove: boolean },
+): Promise<string | { checked: number; unmatched: number }> {
   const tree = await collectionTree(shop, collectionId);
   if (!tree) return "Kolekce není v přehledu kolekcí s pravidly, přeskočeno.";
 
@@ -85,6 +98,5 @@ export async function cleanCollection(
       })),
     });
   }
-  return `${products.length} produktů, nevyhovuje ${unmatched.length}` +
-    (unmatched.length ? (remove ? ", odebráno." : " (jen nanečisto).") : ".");
+  return { checked: products.length, unmatched: unmatched.length };
 }
