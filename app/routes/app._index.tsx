@@ -306,8 +306,8 @@ export default function Index() {
         )}
         <s-paragraph>
           {data.removal.enabled
-            ? "Vyhodnotit kolekci přidá vyhovující produkty a nevyhovující z kolekce odebere (Ostré odebírání je zapnuté)."
-            : "Vyhodnotit kolekci jen přidává vyhovující produkty; odebírá až se zapnutým Ostrým odebíráním."}
+            ? "Vyhodnotit kolekci i Vyhodnotit seznam přidají vyhovující produkty a nevyhovující z kolekcí odeberou (Ostré odebírání je zapnuté)."
+            : "Vyhodnotit kolekci i Vyhodnotit seznam jen přidávají vyhovující produkty; odebírají až se zapnutým Ostrým odebíráním."}
         </s-paragraph>
         <s-stack direction="inline" gap="base">
           <s-button onClick={() => submit("sync")} disabled={busy}>
