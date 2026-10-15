@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import db from "../db.server";
-import { isRuleCollection } from "./rules/engine";
-import type { CollectionSnapshot, FieldMap, RuleSet } from "./rules/types";
+import { isParentCollection, isRuleCollection } from "./rules/engine";
+import { SUBCOLLECTION_KEY, type CollectionSnapshot, type FieldMap, type RuleSet } from "./rules/types";
 import { gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
 import { collectionQuery, collectionsBulkQuery, toCollectionSnapshot } from "./shopify/queries";
 
@@ -56,25 +56,47 @@ export async function syncCollection(admin: AdminClient, shop: string, rules: Ru
   const node = data.collection;
   if (!node) {
     await db.ruleCollection.deleteMany({ where: { id, shop } });
-    return { synced: false };
+    return { synced: false, parent: false };
   }
   const snapshot = toCollectionSnapshot(node, rules);
   if (!isEligible(node, snapshot, rules)) {
     await db.ruleCollection.deleteMany({ where: { id, shop } });
-    return { synced: false };
+    return { synced: false, parent: false };
   }
   await db.ruleCollection.upsert({
     where: { id },
     create: { id, shop, title: snapshot.title ?? "", fields: snapshot.fields as object },
     update: { title: snapshot.title ?? "", fields: snapshot.fields as object },
   });
-  return { synced: true };
+  // Parents stay in the local copy for sorting and the matching-rules report.
+  return { synced: true, parent: isParentCollection(snapshot) };
 }
 
-export async function loadRuleCollections(shop: string): Promise<CollectionSnapshot[]> {
+/** All rule collections in the local copy, parents included (sorting and the report). */
+export async function loadAllRuleCollections(shop: string): Promise<CollectionSnapshot[]> {
   const rows = await db.ruleCollection.findMany({
     where: { shop },
     select: { id: true, title: true, fields: true },
   });
   return rows.map((r) => ({ id: r.id, title: r.title, fields: r.fields as FieldMap }));
+}
+
+/** The rule collections the app fills and cleans: everything except parents. */
+export async function loadRuleCollections(shop: string): Promise<CollectionSnapshot[]> {
+  return (await loadAllRuleCollections(shop)).filter((c) => !isParentCollection(c));
+}
+
+/** One rule collection from the local copy, or null when it is not there. */
+export async function loadRuleCollection(shop: string, id: string): Promise<CollectionSnapshot | null> {
+  const row = await db.ruleCollection.findFirst({ where: { shop, id }, select: { id: true, title: true, fields: true } });
+  return row && { id: row.id, title: row.title, fields: row.fields as FieldMap };
+}
+
+/** Parent collections in the local copy, skipped by filling and removal. Counted in SQL to stay cheap. */
+export async function countParentCollections(shop: string): Promise<number> {
+  const [row] = await db.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*) AS count FROM "RuleCollection"
+    WHERE shop = ${shop}
+      AND COALESCE(NULLIF(TRIM(fields ->> ${SUBCOLLECTION_KEY}), ''), '[]') <> '[]'`;
+  return Number(row?.count ?? 0);
 }

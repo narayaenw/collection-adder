@@ -5,6 +5,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { countParentCollections } from "../lib/collections.server";
 import { evaluateProduct } from "../lib/evaluate.server";
 import { enqueueJob, resetQueue } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
@@ -65,8 +66,9 @@ async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [collectionCount, lastSync, jobs, rules, statusCounts] = await Promise.all([
+  const [collectionCount, parentCount, lastSync, jobs, rules, statusCounts] = await Promise.all([
     db.ruleCollection.count({ where: { shop } }),
+    countParentCollections(shop),
     db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } }),
     db.job.findMany({
       where: { shop, type: { notIn: BATCH_JOBS } },
@@ -109,7 +111,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       })
     : [];
   return {
-    collectionCount,
+    // Parents are only sorted; filling and removal skip them.
+    collectionCount: collectionCount - parentCount,
+    parentCount,
     pendingCleans,
     removal: {
       enabled: rules.removal.enabled,
@@ -307,6 +311,12 @@ export default function Index() {
           <s-text type="strong">{data.filter.value}</s-text>: {data.collectionCount}
           {data.lastSync ? `, naposledy načteno ${new Date(data.lastSync).toLocaleString("cs-CZ")}` : ", zatím nenačteno"}.
         </s-paragraph>
+        {data.parentCount > 0 && (
+          <s-paragraph>
+            Z přiřazování a odebírání vynecháno {data.parentCount} nadřazených kolekcí (mají podkolekce
+            v metapoli custom.subkolekce, produkty do nich propisuje Shopify); řadí se dál.
+          </s-paragraph>
+        )}
         {data.pendingAdds > 0 && (
           <s-paragraph>Čeká na zpracování {data.pendingAdds} dávek přiřazení.</s-paragraph>
         )}

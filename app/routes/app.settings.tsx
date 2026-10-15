@@ -255,8 +255,8 @@ export default function Settings() {
           <s-stack direction="block" gap="base">
             <s-paragraph>
               Projde všechny kolekce s pravidly a najde produkty, které pravidla do kolekce
-              nezařazují (i ručně přidané). Produkt nadřazené kolekce zůstane, pokud patří do
-              některé její podkolekce. Bez ostrého odebírání se jen vypíše, co by se odebralo.
+              nezařazují (i ručně přidané). Nadřazené kolekce (s podkolekcemi) se přeskakují.
+              Bez ostrého odebírání se jen vypíše, co by se odebralo.
             </s-paragraph>
             <s-checkbox
               name="removalEnabled"

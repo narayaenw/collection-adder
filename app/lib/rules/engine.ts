@@ -201,6 +201,14 @@ export function isRuleCollection(collection: CollectionSnapshot, rules: RuleSet)
   return toList(collection.fields[key]).some((v) => normalizeText(v) === normalizeText(value));
 }
 
+/**
+ * A parent collection lists its subcollections in the subcollection metafield. Shopify passes
+ * the subcollections' products up to it, so the app never fills or cleans it (only sorts it).
+ */
+export function isParentCollection(collection: CollectionSnapshot): boolean {
+  return toList(collection.fields[SUBCOLLECTION_KEY]).length > 0;
+}
+
 export function productMatchesCollection(
   product: ProductSnapshot,
   collection: CollectionSnapshot,
