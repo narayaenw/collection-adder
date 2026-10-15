@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cloud-sql-proxy:*)",
+      "Bash(psql:*)"
+    ]
+  }
+}
