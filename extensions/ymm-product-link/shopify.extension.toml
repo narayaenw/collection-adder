@@ -1,0 +1,8 @@
+[[extensions]]
+name = "Zařadit do kolekcí podle pravidel"
+handle = "ymm-product-link"
+type = "admin_link"
+
+[[extensions.targeting]]
+target = "admin.product-details.action.link"
+url = "app/run/product"
