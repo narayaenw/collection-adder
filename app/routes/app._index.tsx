@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -6,7 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { evaluateProduct } from "../lib/evaluate.server";
-import { enqueueJob } from "../lib/queue.server";
+import { enqueueJob, resetQueue } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
 import { gql, type AdminClient } from "../lib/shopify/api.server";
 import { toGid } from "../lib/shopify/queries";
@@ -217,6 +217,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           (invalid.length ? ` Neplatné: ${invalid.slice(0, 5).join(", ")}${invalid.length > 5 ? "…" : ""}` : ""),
       };
     }
+    case "reset-queue": {
+      const { cancelled, purge } = await resetQueue(shop);
+      const jobs = `Zrušeno ${cancelled} úloh ve frontě.`;
+      if (!purge || purge.ok) return { message: `Fronta vynulována. ${jobs}` };
+      return { message: `${jobs} ${purge.error} Zbylé úlohy v ní doběhnou naprázdno.` };
+    }
     default:
       return { message: "Neznámá akce." };
   }
@@ -248,8 +254,9 @@ async function downloadExport(id: string, path = `/app/export/${id}`, name = `pl
   URL.revokeObjectURL(url);
 }
 
-const STATUS_TONES: Record<string, "info" | "success" | "critical" | "neutral"> = {
+const STATUS_TONES: Record<string, "info" | "success" | "critical" | "warning" | "neutral"> = {
   queued: "neutral",
+  cancelled: "warning",
   running: "info",
   done: "success",
   failed: "critical",
@@ -260,6 +267,7 @@ const STATUS_LABELS: Record<string, string> = {
   running: "Běží",
   done: "Hotovo",
   failed: "Chyba",
+  cancelled: "Zrušeno",
 };
 
 export default function Index() {
@@ -268,6 +276,7 @@ export default function Index() {
   const shopify = useAppBridge();
   const revalidator = useRevalidator();
   const busy = fetcher.state !== "idle";
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.message) {
@@ -393,6 +402,36 @@ export default function Index() {
           <s-button onClick={() => submit("export-rule-groups")} disabled={busy}>
             Spustit report
           </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Vynulovat frontu">
+        <s-stack gap="base">
+          <s-paragraph>
+            Smaže všechny čekající úlohy z fronty (přiřazení, řazení, odebírání i rozběhnuté
+            vyhodnocení) a označí je jako zrušené. Potom lze začít od čista, např. tlačítkem
+            Vyhodnotit vše. Už provedené změny v kolekcích zůstanou.
+          </s-paragraph>
+          {confirmReset ? (
+            <s-stack direction="inline" gap="base">
+              <s-button
+                tone="critical"
+                variant="primary"
+                onClick={() => {
+                  setConfirmReset(false);
+                  submit("reset-queue");
+                }}
+                disabled={busy}
+              >
+                Opravdu vynulovat frontu
+              </s-button>
+              <s-button onClick={() => setConfirmReset(false)}>Zpět</s-button>
+            </s-stack>
+          ) : (
+            <s-button tone="critical" onClick={() => setConfirmReset(true)} disabled={busy}>
+              Vynulovat frontu
+            </s-button>
+          )}
         </s-stack>
       </s-section>
 
