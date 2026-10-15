@@ -100,6 +100,23 @@ export function productsBulkQuery(
 }`;
 }
 
+/** All products with built-in fields and the given metafields, for the nightly change check. */
+export function productFieldsBulkQuery(metafieldKeys: string[]): string {
+  return `{
+  products {
+    edges {
+      node {
+        id
+        vendor
+        productType
+        tags
+        ${metafieldSelections(metafieldKeys)}
+      }
+    }
+  }
+}`;
+}
+
 export function productQuery(rules: RuleSet): string {
   return `#graphql
   query RuleProduct($id: ID!) {

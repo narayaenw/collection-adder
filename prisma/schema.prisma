@@ -89,3 +89,29 @@ model RemovalItem {
   @@index([shop, runId])
   @@index([runId, collectionId])
 }
+
+/// When a nightly removal ("clean") or sort pass last went through a collection, with a hash of
+/// its metafields and the settings then, so unchanged collections are skipped.
+model CollectionCheck {
+  /// "<kind>:<collectionId>"
+  id           String   @id
+  shop         String
+  kind         String
+  collectionId String
+  hash         String
+  checkedAt    DateTime
+
+  @@index([shop, kind])
+}
+
+/// Product fields as the last nightly pass of each kind saw them, to find changed products.
+model ProductState {
+  /// "<kind>:<productId>"
+  id        String @id
+  shop      String
+  kind      String
+  productId String
+  fields    Json
+
+  @@index([shop, kind])
+}

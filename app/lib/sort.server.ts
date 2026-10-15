@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
+import { recordCheck } from "./changes.server";
 import { enqueueJob } from "./queue.server";
 import { desiredOrder, reorderMoves, type SortProduct } from "./rules/sorting";
 import type { RuleSet } from "./rules/types";
@@ -25,9 +26,15 @@ async function waitForJob(admin: AdminClient, id: string) {
  * Orders a collection's products by the sort settings: switches it to manual sorting and moves
  * only the products that are out of place.
  */
-export async function sortCollection(admin: AdminClient, rules: RuleSet, collectionId: string) {
+export async function sortCollection(
+  admin: AdminClient,
+  shop: string,
+  rules: RuleSet,
+  collectionId: string,
+) {
   const settings = rules.sorting;
   if (!settings.enabled) return "Řazení je vypnuté.";
+  const startedAt = new Date();
 
   const collectionKeys = [settings.collectionSizeKey, settings.collectionMatchKey];
   const productKeys = [
@@ -78,6 +85,7 @@ export async function sortCollection(admin: AdminClient, rules: RuleSet, collect
     if (job && !job.done) await waitForJob(admin, job.id);
   }
 
+  await recordCheck(shop, "sort", rules, collectionId, startedAt);
   return moves.length === 0
     ? `${products.length} produktů, pořadí už sedí.`
     : `${products.length} produktů, přesunuto ${moves.length}.`;

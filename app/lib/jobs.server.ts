@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import db from "../db.server";
 import { unauthenticated } from "../shopify.server";
+import { planChangedCollections, skippedSummary } from "./changes.server";
 import { syncAllCollections, syncCollection, loadRuleCollections } from "./collections.server";
 import { evaluateProduct } from "./evaluate.server";
 import { enqueueJob, type JobType } from "./queue.server";
@@ -448,29 +449,44 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
 
   async "sort-collection"(shop, payload) {
     const admin = await adminFor(shop);
-    return sortCollection(admin, await getRules(shop), payload.collectionId);
+    return sortCollection(admin, shop, await getRules(shop), payload.collectionId);
   },
 
-  async "sort-all"(shop) {
+  /** Sorts every rule collection; the nightly run (changedOnly) skips unchanged ones. */
+  async "sort-all"(shop, payload) {
     const rules = await getRules(shop);
     if (!rules.sorting.enabled) return "Řazení je vypnuté.";
     const collections = await loadRuleCollections(shop);
-    for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
-    return `Naplánováno seřazení ${collections.length} kolekcí.`;
+    if (!payload.changedOnly) {
+      for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
+      return `Naplánováno seřazení ${collections.length} kolekcí.`;
+    }
+    const plan = await planChangedCollections(await adminFor(shop), shop, "sort", rules, collections);
+    for (const collectionId of plan.collectionIds) await enqueueJob(shop, "sort-collection", { collectionId });
+    await plan.save();
+    return `Naplánováno seřazení ${plan.collectionIds.length} kolekcí` + skippedSummary(plan, collections.length);
   },
 
   /** Checks every rule collection for products the rules no longer put there, one job each. */
-  async "remove-unmatched"(shop, _payload, jobId) {
+  async "remove-unmatched"(shop, payload, jobId) {
     const rules = await getRules(shop);
     const remove = rules.removal.enabled;
+    const admin = await adminFor(shop);
     // A stale copy could lack values the rules read (like the car), which would remove too much.
-    await syncAllCollections(await adminFor(shop), shop, rules);
+    await syncAllCollections(admin, shop, rules);
     const collections = await loadRuleCollections(shop);
-    for (const { id } of collections) {
-      await enqueueJob(shop, "clean-collection", { collectionId: id, runId: jobId, remove });
+    // The nightly run (changedOnly) skips collections nothing has changed for.
+    const plan = payload.changedOnly
+      ? await planChangedCollections(admin, shop, "clean", rules, collections)
+      : null;
+    const ids = plan ? plan.collectionIds : collections.map((c) => c.id);
+    for (const collectionId of ids) {
+      await enqueueJob(shop, "clean-collection", { collectionId, runId: jobId, remove });
     }
-    return `Naplánována kontrola ${collections.length} kolekcí` +
-      (remove ? ", nevyhovující produkty se odeberou." : " nanečisto (nic se neodebere).");
+    await plan?.save();
+    return `Naplánována kontrola ${ids.length} kolekcí` +
+      (remove ? ", nevyhovující produkty se odeberou" : " nanečisto (nic se neodebere)") +
+      (plan ? skippedSummary(plan, collections.length) : ".");
   },
 
   async "clean-collection"(shop, payload) {

@@ -293,13 +293,21 @@ export function productMetafieldKeys(rules: RuleSet): string[] {
   return productFieldsUsed(rules).filter((f) => !PRODUCT_BUILTIN_FIELDS.includes(f));
 }
 
-/** Collection metafield keys the rules and the matching-rules report read, including the filter key. */
+/**
+ * Collection metafield keys the rules, the matching-rules report and the sort settings read,
+ * including the filter key.
+ */
 export function collectionMetafieldKeys(rules: RuleSet): string[] {
   const keys = new Set<string>([rules.collectionFilter.key]);
   for (const c of rules.conditions) {
     if (c.source.type === "collection") keys.add(c.source.key);
   }
   if (rules.carMatch.vendors.length > 0) keys.add(rules.carMatch.collectionKey);
+  // Kept locally so the nightly sort can tell which collections changed.
+  if (rules.sorting.enabled) {
+    keys.add(rules.sorting.collectionSizeKey);
+    keys.add(rules.sorting.collectionMatchKey);
+  }
   keys.add(SUBCOLLECTION_KEY);
   return [...keys];
 }
