@@ -4,7 +4,7 @@ import { unauthenticated } from "../shopify.server";
 import { planChangedCollections, skippedSummary } from "./changes.server";
 import { syncAllCollections, syncCollection, loadRuleCollections } from "./collections.server";
 import { evaluateProduct } from "./evaluate.server";
-import { enqueueJob, type JobType } from "./queue.server";
+import { enqueueJob, JobCancelledError, runInJob, type JobType } from "./queue.server";
 import {
   createMatcher,
   isVendorExcluded,
@@ -508,20 +508,27 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
 /** Executes a stored job. Throws on failure so Cloud Tasks retries it. */
 export async function runJob(jobId: string) {
   const job = await db.job.findUnique({ where: { id: jobId } });
-  if (!job || job.status === "done") return;
+  if (!job) return;
 
-  await db.job.update({
-    where: { id: jobId },
+  // A job cancelled by a queue reset (or already done) is skipped, even if its task survived.
+  const { count } = await db.job.updateMany({
+    where: { id: jobId, status: { notIn: ["done", "cancelled"] } },
     data: { status: "running", attempts: { increment: 1 }, message: null },
   });
+  if (count === 0) return;
+  // Status updates below only touch a running job, so a reset meanwhile keeps it cancelled.
+  const finish = (status: string, message: string) =>
+    db.job.updateMany({ where: { id: jobId, status: "running" }, data: { status, message } });
   try {
     const handler = handlers[job.type as JobType];
     if (!handler) throw new Error(`Unknown job type ${job.type}`);
-    const message = await handler(job.shop, job.payload as Payload, job.id);
-    await db.job.update({ where: { id: jobId }, data: { status: "done", message } });
+    const message = await runInJob(jobId, () => handler(job.shop, job.payload as Payload, job.id));
+    await finish("done", message);
   } catch (error) {
+    if (error instanceof JobCancelledError) return;
     const message = error instanceof Error ? error.message : String(error);
-    await db.job.update({ where: { id: jobId }, data: { status: "failed", message: message.slice(0, 2000) } });
+    const { count: failed } = await finish("failed", message.slice(0, 2000));
+    if (failed === 0) return; // cancelled while running: don't let Cloud Tasks retry it
     throw error;
   }
 }
