@@ -27,6 +27,8 @@ export function costOf(source: unknown): QueryCost | undefined {
 export class CostBucket {
   private status?: { maximum: number; available: number; rate: number; at: number };
   private readonly costs = new Map<string, number>();
+  /** Requested cost of requests sent but not answered yet. */
+  private inFlight = 0;
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -38,31 +40,38 @@ export class CostBucket {
   }
 
   /**
-   * Milliseconds to wait before sending `query` so its requested cost fits, then counts the
-   * cost as spent so the next caller waits its turn. 0 while nothing is known yet.
+   * Milliseconds to wait before sending `query` so its requested cost fits, and the cost now
+   * counted as spent (so the next caller waits its turn). Pass the cost to `record` with the
+   * response. Waits nothing while nothing is known yet.
    */
-  reserve(query: string): number {
+  reserve(query: string): { waitMs: number; cost: number } {
     const s = this.status;
-    const cost = this.costs.get(query);
+    const known = this.costs.get(query);
     const available = this.available();
-    if (!s || cost === undefined || available === undefined) return 0;
-    const needed = Math.min(cost, s.maximum);
-    const waitMs = available >= needed ? 0 : Math.ceil(((needed - available) / s.rate) * 1000);
+    const cost = s && known !== undefined ? Math.min(known, s.maximum) : 0;
+    this.inFlight += cost;
+    if (!s || available === undefined || cost === 0) return { waitMs: 0, cost };
+    const waitMs = available >= cost ? 0 : Math.ceil(((cost - available) / s.rate) * 1000);
     // Spent at the moment the request goes out, after the wait.
-    s.available = available + (s.rate * waitMs) / 1000 - needed;
+    s.available = available + (s.rate * waitMs) / 1000 - cost;
     s.at = this.now();
-    return waitMs;
+    return { waitMs, cost };
   }
 
-  /** Takes in the cost report of a response (successful or throttled). */
-  record(query: string, cost: QueryCost | undefined) {
+  /**
+   * Takes in the cost report of a response (successful or throttled) to a request that reserved
+   * `reserved`. Shopify's figure does not yet include requests still on their way, so their
+   * reservations are taken off it.
+   */
+  record(query: string, cost: QueryCost | undefined, reserved = 0) {
+    this.inFlight = Math.max(0, this.inFlight - reserved);
     if (!cost) return;
     if (typeof cost.requestedQueryCost === "number") this.costs.set(query, cost.requestedQueryCost);
     const t = cost.throttleStatus;
     if (t && t.restoreRate > 0) {
       this.status = {
         maximum: t.maximumAvailable,
-        available: t.currentlyAvailable,
+        available: t.currentlyAvailable - this.inFlight,
         rate: t.restoreRate,
         at: this.now(),
       };
