@@ -45,6 +45,8 @@ export async function cleanOne(
     if (!data.collection) return "Kolekce nenalezena.";
     if (data.collection.ruleSet) return "Smart kolekce, přeskočeno.";
     for (const node of data.collection.products.nodes) {
+      // Pages can repeat products when the collection is reordered meanwhile (e.g. by a sort job).
+      if (titles.has(node.id)) continue;
       products.push(toProductSnapshot(node, rules));
       titles.set(node.id, node.title ?? "");
     }
