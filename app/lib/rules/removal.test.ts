@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { isParentCollection } from "./engine";
 import { unmatchedProducts } from "./removal";
-import { DEFAULT_RULE_SET, type CollectionSnapshot, type ProductSnapshot } from "./types";
+import { DEFAULT_RULE_SET, SUBCOLLECTION_KEY, type CollectionSnapshot, type ProductSnapshot } from "./types";
 
 const ymm = (id: string, pcd: string, car: string): CollectionSnapshot => ({
   id,
@@ -33,13 +34,7 @@ describe("unmatchedProducts", () => {
 
   it("keeps matching products and returns the rest", () => {
     const products = [wheel("p1"), wheel("p2", { "custom.pcd": '["5x112"]' }), wheel("p3", { vendor: "AEZ" })];
-    expect(unmatchedProducts(bmw, [], products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
-  });
-
-  it("keeps products that match a subcollection", () => {
-    const child = ymm("c2", "5x112", "BMW");
-    const products = [wheel("p2", { "custom.pcd": '["5x112"]' })];
-    expect(unmatchedProducts(bmw, [child], products, DEFAULT_RULE_SET)).toEqual([]);
+    expect(unmatchedProducts(bmw, products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
   });
 
   it("removes Racing Line products made for another car", () => {
@@ -48,6 +43,15 @@ describe("unmatchedProducts", () => {
       wheel("p2", { vendor: "Racing Line", "custom.auto": '["Audi"]' }),
       wheel("p3", { vendor: "Racing Line", "custom.auto": null }),
     ];
-    expect(unmatchedProducts(bmw, [], products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
+    expect(unmatchedProducts(bmw, products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
+  });
+});
+
+describe("isParentCollection", () => {
+  it("is true only with listed subcollections", () => {
+    expect(isParentCollection(ymm("p", "4x98", "BMW"))).toBe(false);
+    const withChildren = ymm("p", "4x98", "BMW");
+    expect(isParentCollection({ ...withChildren, fields: { ...withChildren.fields, [SUBCOLLECTION_KEY]: "[]" } })).toBe(false);
+    expect(isParentCollection({ ...withChildren, fields: { ...withChildren.fields, [SUBCOLLECTION_KEY]: '["c1"]' } })).toBe(true);
   });
 });

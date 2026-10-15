@@ -2,7 +2,12 @@
 import db from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { planChangedCollections, skippedSummary } from "./changes.server";
-import { syncAllCollections, syncCollection, loadRuleCollections } from "./collections.server";
+import {
+  loadAllRuleCollections,
+  loadRuleCollections,
+  syncAllCollections,
+  syncCollection,
+} from "./collections.server";
 import { evaluateProduct } from "./evaluate.server";
 import { enqueueJob, JobCancelledError, runInJob, type JobType } from "./queue.server";
 import {
@@ -54,7 +59,7 @@ async function addProducts(admin: AdminClient, collectionId: string, productIds:
 
 /**
  * Reads all products once and returns, per collection, the matching products not in it yet.
- * Subcollection products reach parent collections through Shopify itself.
+ * Parent collections are left out: Shopify passes their subcollections' products up itself.
  */
 async function planAdditions(admin: AdminClient, shop: string, collectionIds?: Set<string>) {
   const rules = await getRules(shop);
@@ -235,12 +240,13 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
   async "evaluate-collection"(shop, payload, jobId) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
-    const { synced } = await syncCollection(admin, shop, rules, payload.collectionId);
+    const { synced, parent } = await syncCollection(admin, shop, rules, payload.collectionId);
     if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
+    if (parent) return "Nadřazená kolekce, přeskočeno (produkty dostává z podkolekcí).";
     const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
     let result: string;
     if (fast.rest.size === 0) {
-      result = `Prověřeno ${fast.checked} produktů, přidáno ${fast.added} (včetně nadřazených kolekcí).`;
+      result = `Prověřeno ${fast.checked} produktů, přidáno ${fast.added}.`;
     } else {
       const { additions, productCount } = await planAdditions(
         admin,
@@ -270,22 +276,28 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     const ids = new Set<string>();
+    let parents = 0;
     for (const id of payload.collectionIds as string[]) {
-      const { synced } = await syncCollection(admin, shop, rules, id);
-      if (synced) ids.add(id);
+      const { synced, parent } = await syncCollection(admin, shop, rules, id);
+      if (synced && parent) parents++;
+      else if (synced) ids.add(id);
     }
-    const skipped = (payload.collectionIds as string[]).length - ids.size;
-    if (ids.size === 0) return "Žádná kolekce nemá pravidla (nebo jsou to smart kolekce).";
-    const skippedText = skipped ? ` (${skipped} přeskočeno, nemají pravidla)` : "";
+    const skipped = (payload.collectionIds as string[]).length - ids.size - parents;
+    const skippedText = [
+      skipped ? `${skipped} přeskočeno, nemají pravidla` : "",
+      parents ? `${parents} nadřazených přeskočeno` : "",
+    ].filter(Boolean).join(", ");
+    if (ids.size === 0) return `Žádná kolekce ke zpracování (${skippedText}).`;
+    const skippedSuffix = skippedText ? ` (${skippedText})` : "";
 
     // Search per collection pays off for a few collections; many at once share one export.
     if (ids.size <= SEARCH_LIMIT) {
       const fast = await evaluateBySearch(admin, shop, rules, ids);
       let message = `${ids.size - fast.rest.size} kolekcí: prověřeno ${fast.checked} produktů, ` +
-        `přidáno ${fast.added}${skippedText}.`;
+        `přidáno ${fast.added}${skippedSuffix}.`;
       if (fast.rest.size > 0) {
         const { additions } = await planAdditions(admin, shop, fast.rest);
-        message += ` ${fast.rest.size} kolekcí s podkolekcemi: naplánováno ` +
+        message += ` ${fast.rest.size} kolekcí mimo přehled: naplánováno ` +
           `${await queueAdditions(shop, additions)} přiřazení.`;
       }
       // With live removal on, products the rules no longer put here are taken out too.
@@ -303,7 +315,7 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       return message;
     }
     const { additions, productCount } = await planAdditions(admin, shop, ids);
-    let message = `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedText}` +
+    let message = `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedSuffix}` +
       `. Naplánováno ${await queueAdditions(shop, additions)} přiřazení.`;
     if (rules.removal.enabled) {
       for (const collectionId of ids) {
@@ -384,7 +396,7 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
     await syncAllCollections(admin, shop, rules);
-    const rows = ruleGroups(await loadRuleCollections(shop), rules);
+    const rows = ruleGroups(await loadAllRuleCollections(shop), rules);
     await db.exportFile.deleteMany({ where: { id: { startsWith: `${jobId}-` } } });
     const header = ["parent_id", "parent_title", "subcollections", "distinct_rules", ...ruleValueKeys(rules), "count"].join(",");
     const lines = rows.map((r) =>
@@ -452,11 +464,14 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     return sortCollection(admin, shop, await getRules(shop), payload.collectionId);
   },
 
-  /** Sorts every rule collection; the nightly run (changedOnly) skips unchanged ones. */
+  /**
+   * Sorts every rule collection, parents included; the nightly run (changedOnly) skips
+   * unchanged ones.
+   */
   async "sort-all"(shop, payload) {
     const rules = await getRules(shop);
     if (!rules.sorting.enabled) return "Řazení je vypnuté.";
-    const collections = await loadRuleCollections(shop);
+    const collections = await loadAllRuleCollections(shop);
     if (!payload.changedOnly) {
       for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
       return `Naplánováno seřazení ${collections.length} kolekcí.`;

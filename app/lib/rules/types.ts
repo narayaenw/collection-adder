@@ -157,5 +157,5 @@ export const DEFAULT_RULE_SET: RuleSet = {
   },
 };
 
-/** Parent collection metafield listing its subcollections; only read by the matching-rules report. */
+/** Parent collection metafield listing its subcollections; parents are only sorted, never filled or cleaned. */
 export const SUBCOLLECTION_KEY = "custom.subkolekce";
