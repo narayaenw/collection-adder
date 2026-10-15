@@ -129,7 +129,9 @@ async function purgeCloudTasks(): Promise<{ ok: true } | { ok: false; error: str
 /**
  * Empties the job queue: purges Cloud Tasks and marks every queued or running job cancelled, so the
  * pending counters drop to zero. Tasks the purge misses find their job cancelled and do nothing;
- * running jobs stop the next time they try to queue more work.
+ * running jobs stop the next time they try to queue more work. Nightly check records are dropped
+ * too: they are saved when work is queued, so a purge would otherwise leave those collections
+ * marked as checked and the next nightly run would skip them.
  */
 export async function resetQueue(shop: string) {
   const purge = await purgeCloudTasks();
@@ -137,5 +139,6 @@ export async function resetQueue(shop: string) {
     where: { shop, status: { in: ["queued", "running"] } },
     data: { status: "cancelled", message: CANCELLED_MESSAGE },
   });
+  await db.collectionCheck.deleteMany({ where: { shop } });
   return { cancelled: count, purge };
 }
