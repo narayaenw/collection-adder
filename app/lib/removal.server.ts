@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import db from "../db.server";
+import { recordCheck } from "./changes.server";
 import { toList } from "./rules/engine";
 import { unmatchedProducts } from "./rules/removal";
 import { SUBCOLLECTION_KEY, type CollectionSnapshot, type FieldMap, type RuleSet } from "./rules/types";
@@ -55,6 +56,7 @@ export async function cleanOne(
   rules: RuleSet,
   { collectionId, runId, remove }: { collectionId: string; runId: string; remove: boolean },
 ): Promise<string | { checked: number; unmatched: number }> {
+  const startedAt = new Date();
   const tree = await collectionTree(shop, collectionId);
   if (!tree) return "Kolekce není v přehledu kolekcí s pravidly, přeskočeno.";
 
@@ -98,5 +100,6 @@ export async function cleanOne(
       })),
     });
   }
+  await recordCheck(shop, "clean", rules, collectionId, startedAt);
   return { checked: products.length, unmatched: unmatched.length };
 }

@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
+import { CostBucket, costOf, type QueryCost } from "./throttle";
+
 /** Minimal shape of the admin GraphQL client, so jobs and routes can share helpers. */
 export interface AdminClient {
   graphql: (
@@ -15,36 +17,55 @@ function isThrottled(error: unknown): boolean {
   return /throttled/i.test(text) || e?.response?.code === 429;
 }
 
+/** One shop per app instance, so jobs share one estimate of its cost bucket. */
+const bucket = new CostBucket();
+
+/** Wait after a throttled response: until the cost has refilled, else a growing backoff. */
+function throttleWait(cost: QueryCost | undefined, attempt: number): number {
+  const wait = CostBucket.throttledWait(cost);
+  const base = wait === undefined ? Math.min(2000 * attempt, 20000) : Math.min(wait + 250, 60000);
+  // Spread parallel jobs that were throttled together, so they don't all come back at once.
+  return base + Math.floor(Math.random() * 1000);
+}
+
+/** How long a request keeps waiting out throttling before it gives up (jobs time out at 30 min). */
+const THROTTLE_BUDGET_MS = 15 * 60 * 1000;
+
 /**
- * Runs an Admin GraphQL operation and returns `data`. Retries with backoff while Shopify
- * throttles the request, so a long job keeps going under the API rate limit.
+ * Runs an Admin GraphQL operation and returns `data`. Waits until Shopify's cost bucket can take
+ * the query and keeps retrying while Shopify throttles it, so parallel jobs take turns under the
+ * limit instead of failing and starting over.
  */
 export async function gql<T = any>(
   admin: AdminClient,
   query: string,
   variables?: Record<string, unknown>,
 ): Promise<T> {
-  const maxAttempts = 10;
+  const started = Date.now();
+  const retryThrottled = async (error: unknown, cost: QueryCost | undefined, attempt: number) => {
+    if (!isThrottled(error) || Date.now() - started > THROTTLE_BUDGET_MS) return false;
+    await sleep(throttleWait(cost, attempt));
+    return true;
+  };
   for (let attempt = 1; ; attempt++) {
+    const { waitMs, cost: reserved } = bucket.reserve(query);
+    if (waitMs > 0) await sleep(waitMs);
+    let json: { data?: T; errors?: unknown };
     try {
       const response = await admin.graphql(query, { variables });
-      const json = (await response.json()) as { data?: T; errors?: unknown };
-      if (json.errors) {
-        const error = new Error(`GraphQL error: ${JSON.stringify(json.errors)}`);
-        if (isThrottled(error) && attempt < maxAttempts) {
-          await sleep(Math.min(2000 * attempt, 20000));
-          continue;
-        }
-        throw error;
-      }
-      return json.data as T;
+      json = (await response.json()) as { data?: T; errors?: unknown };
     } catch (error) {
-      if (isThrottled(error) && attempt < maxAttempts) {
-        await sleep(Math.min(2000 * attempt, 20000));
-        continue;
-      }
+      const cost = costOf(error);
+      bucket.record(query, cost, reserved);
+      if (await retryThrottled(error, cost, attempt)) continue;
       throw error;
     }
+    const cost = costOf(json);
+    bucket.record(query, cost, reserved);
+    if (!json.errors) return json.data as T;
+    const error = new Error(`GraphQL error: ${JSON.stringify(json.errors)}`);
+    if (await retryThrottled(error, cost, attempt)) continue;
+    throw error;
   }
 }
 

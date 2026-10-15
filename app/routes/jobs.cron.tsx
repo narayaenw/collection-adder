@@ -5,7 +5,8 @@ import { enqueueJob } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
 
 // Called nightly by Cloud Scheduler. Re-reads all rule collections, because metafield edits
-// on a collection don't always send a collection webhook, then sorts them once that is done.
+// on a collection don't always send a collection webhook, then removes and sorts in the
+// collections that changed (the buttons in the app still go through all of them).
 /** Collection sync takes a few minutes; sorting starts after it on the fresh list. */
 const SORT_ALL_DELAY_SECONDS = 30 * 60;
 /** Removal also needs the fresh list and runs before sorting. */
@@ -21,9 +22,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   for (const { shop } of sessions) {
     await enqueueJob(shop, "sync-collections");
     if ((await getRules(shop)).removal.nightly) {
-      await enqueueJob(shop, "remove-unmatched", {}, { delaySeconds: REMOVE_DELAY_SECONDS });
+      await enqueueJob(shop, "remove-unmatched", { changedOnly: true }, { delaySeconds: REMOVE_DELAY_SECONDS });
     }
-    await enqueueJob(shop, "sort-all", {}, { delaySeconds: SORT_ALL_DELAY_SECONDS });
+    await enqueueJob(shop, "sort-all", { changedOnly: true }, { delaySeconds: SORT_ALL_DELAY_SECONDS });
   }
   return Response.json({ shops: sessions.length });
 };
