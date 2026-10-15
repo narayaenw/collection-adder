@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import {
   collectionMetafieldKeys,
+  productFieldsUsed,
   productMetafieldKeys,
 } from "../rules/engine";
 import type { CollectionSnapshot, FieldMap, ProductSnapshot, RuleSet } from "../rules/types";
@@ -129,6 +130,16 @@ export function productSearchPageQuery(rules: RuleSet): string {
   }`;
 }
 
+/** Built-in product fields the rules read (vendor is always kept for the removal report). */
+function usedBuiltinSelections(rules: RuleSet): string {
+  const used = productFieldsUsed(rules);
+  return [
+    "vendor",
+    used.includes("product_type") ? "productType" : "",
+    used.includes("tags") ? "tags" : "",
+  ].filter(Boolean).join("\n          ");
+}
+
 /** A page of a collection's products with the fields the rules need. */
 export function collectionRuleProductsQuery(rules: RuleSet): string {
   return `#graphql
@@ -140,9 +151,7 @@ export function collectionRuleProductsQuery(rules: RuleSet): string {
         nodes {
           id
           title
-          vendor
-          productType
-          tags
+          ${usedBuiltinSelections(rules)}
           ${metafieldSelections(productMetafieldKeys(rules))}
         }
         pageInfo { hasNextPage endCursor }

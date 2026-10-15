@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
+import { CostBucket, costOf, type QueryCost } from "./throttle";
+
 /** Minimal shape of the admin GraphQL client, so jobs and routes can share helpers. */
 export interface AdminClient {
   graphql: (
@@ -15,9 +17,18 @@ function isThrottled(error: unknown): boolean {
   return /throttled/i.test(text) || e?.response?.code === 429;
 }
 
+/** One shop per app instance, so jobs share one estimate of its cost bucket. */
+const bucket = new CostBucket();
+
+/** Wait after a throttled response: until the cost has refilled, else a growing backoff. */
+function throttleWait(cost: QueryCost | undefined, attempt: number): number {
+  const wait = CostBucket.throttledWait(cost);
+  return wait === undefined ? Math.min(2000 * attempt, 20000) : Math.min(wait + 250, 60000);
+}
+
 /**
- * Runs an Admin GraphQL operation and returns `data`. Retries with backoff while Shopify
- * throttles the request, so a long job keeps going under the API rate limit.
+ * Runs an Admin GraphQL operation and returns `data`. Waits until Shopify's cost bucket can take
+ * the query and retries while Shopify throttles it, so a long job keeps going under the limit.
  */
 export async function gql<T = any>(
   admin: AdminClient,
@@ -26,21 +37,27 @@ export async function gql<T = any>(
 ): Promise<T> {
   const maxAttempts = 10;
   for (let attempt = 1; ; attempt++) {
+    const wait = bucket.reserve(query);
+    if (wait > 0) await sleep(wait);
     try {
       const response = await admin.graphql(query, { variables });
       const json = (await response.json()) as { data?: T; errors?: unknown };
+      const cost = costOf(json);
+      bucket.record(query, cost);
       if (json.errors) {
         const error = new Error(`GraphQL error: ${JSON.stringify(json.errors)}`);
         if (isThrottled(error) && attempt < maxAttempts) {
-          await sleep(Math.min(2000 * attempt, 20000));
+          await sleep(throttleWait(cost, attempt));
           continue;
         }
         throw error;
       }
       return json.data as T;
     } catch (error) {
+      const cost = costOf(error);
+      bucket.record(query, cost);
       if (isThrottled(error) && attempt < maxAttempts) {
-        await sleep(Math.min(2000 * attempt, 20000));
+        await sleep(throttleWait(cost, attempt));
         continue;
       }
       throw error;
