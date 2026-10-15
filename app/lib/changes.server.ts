@@ -37,8 +37,9 @@ async function exportProductFields(admin: AdminClient, rules: RuleSet): Promise<
 /**
  * Picks the rule collections a nightly pass has to visit: never checked, checked with other
  * collection metafields or settings, not checked for a week or so, or holding products whose
- * fields changed since the last pass. Call `save` once the jobs are queued, so the next pass
- * compares products with what this one saw.
+ * fields changed since the last pass. Their earlier checks are dropped here, before their jobs
+ * are queued. Call `save` once the jobs are queued, so the next pass compares products with what
+ * this one saw.
  */
 export async function planChangedCollections(
   admin: AdminClient,
@@ -76,6 +77,15 @@ export async function planChangedCollections(
     for (const c of collections) selected.add(c.id);
   }
 
+  // Until its job succeeds and records a fresh check, a selected collection stays selected, so
+  // a purged queue or a job that keeps failing does not lose the change it was selected for.
+  const collectionIds = collections.filter((c) => selected.has(c.id)).map((c) => c.id);
+  for (let i = 0; i < collectionIds.length; i += 1000) {
+    await db.collectionCheck.deleteMany({
+      where: { shop, kind, collectionId: { in: collectionIds.slice(i, i + 1000) } },
+    });
+  }
+
   const save = async () => {
     await db.$transaction(
       async (tx) => {
@@ -99,7 +109,7 @@ export async function planChangedCollections(
   };
 
   return {
-    collectionIds: collections.filter((c) => selected.has(c.id)).map((c) => c.id),
+    collectionIds,
     unchangedCollections,
     changedProducts,
     save,
