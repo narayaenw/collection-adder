@@ -32,7 +32,7 @@ function wheel(overrides: Record<string, string | null> = {}): ProductSnapshot {
     id: "gid://shopify/Product/1",
     fields: {
       vendor: "Brock",
-      "custom.pcd": '["4x98"]',
+      tags: '["Roztec:4x98","Model:X"]',
       "custom.size": "17",
       "custom.cb": "58.1",
       "custom.inner_mm": "140",
@@ -67,7 +67,7 @@ describe("default rules on the Abarth collection", () => {
 
   it("matches PCD regardless of case and decimal comma", () => {
     const c = { ...abarth, fields: { ...abarth.fields, "custom.ymm_pcd": '["5x114.3"]' } };
-    expect(matchingCollectionIds(wheel({ "custom.pcd": "5X114,3" }), [c], rules)).toEqual([c.id]);
+    expect(matchingCollectionIds(wheel({ tags: '["roztec:5X114,3"]' }), [c], rules)).toEqual([c.id]);
   });
 
   it("matches any PCD from a list", () => {
@@ -76,7 +76,12 @@ describe("default rules on the Abarth collection", () => {
   });
 
   it("rejects wrong PCD", () => {
-    expect(matchingCollectionIds(wheel({ "custom.pcd": '["5x112"]' }), [abarth], rules)).toEqual([]);
+    expect(matchingCollectionIds(wheel({ tags: '["Roztec:5x112"]' }), [abarth], rules)).toEqual([]);
+  });
+
+  it("needs the PCD tag with its prefix", () => {
+    expect(matchingCollectionIds(wheel({ tags: '["4x98"]' }), [abarth], rules)).toEqual([]);
+    expect(matchingCollectionIds(wheel({ tags: null }), [abarth], rules)).toEqual([]);
   });
 
   it("treats size range as inclusive", () => {
@@ -112,7 +117,6 @@ describe("default rules on the Abarth collection", () => {
 
   it("lists the metafields it needs", () => {
     expect(productMetafieldKeys(rules)).toEqual([
-      "custom.pcd",
       "custom.size",
       "custom.cb",
       "custom.inner_mm",
@@ -144,11 +148,32 @@ describe("conditions with fixed values", () => {
       ),
     ).toBe(false);
   });
+  it("puts the prefix before every compared value", () => {
+    const condition = {
+      productField: "tags",
+      operator: "eq" as const,
+      source: { type: "collection" as const, key: "custom.ymm_pcd" },
+      valuePrefix: "Roztec:",
+    };
+    const collection = { "custom.ymm_pcd": '["5x100","5x112"]' };
+    expect(evaluateCondition(condition, { tags: '["Roztec:5x112"]' }, collection)).toBe(true);
+    expect(evaluateCondition(condition, { tags: '["5x112"]' }, collection)).toBe(false);
+    expect(evaluateCondition(condition, { tags: '["Roztec:5x112"]' }, {})).toBe(false);
+    const fixed = { ...condition, source: { type: "value" as const, value: "5x112" } };
+    expect(evaluateCondition(fixed, { tags: '["Roztec:5x112"]' }, {})).toBe(true);
+  });
 });
 
 describe("parseRuleSet", () => {
   it("accepts the default rules", () => {
     expect(parseRuleSet(DEFAULT_RULE_SET)).toEqual({ rules: DEFAULT_RULE_SET, errors: [] });
+  });
+
+  it("keeps a condition's value prefix and drops an empty one", () => {
+    const base = { productField: "tags", operator: "eq", source: { type: "collection", key: "custom.ymm_pcd" } };
+    const { rules } = parseRuleSet({ ...DEFAULT_RULE_SET, conditions: [{ ...base, valuePrefix: "Roztec:" }, { ...base, valuePrefix: "" }] });
+    expect(rules?.conditions[0].valuePrefix).toBe("Roztec:");
+    expect(rules?.conditions[1]).not.toHaveProperty("valuePrefix");
   });
 
   it("reports bad input", () => {
@@ -169,7 +194,7 @@ describe("createMatcher", () => {
     const third = { ...abarth, id: "gid://shopify/Collection/3", fields: { ...abarth.fields, "custom.ymm_pcd": '["4X98","5x112"]' } };
     const all = [abarth, other, third];
     const match = createMatcher(all, rules);
-    for (const product of [wheel(), wheel({ "custom.pcd": "5x112" }), wheel({ vendor: "AEZ" })]) {
+    for (const product of [wheel(), wheel({ tags: '["Roztec:5x112"]' }), wheel({ vendor: "AEZ" })]) {
       expect(match(product).sort()).toEqual(matchingCollectionIds(product, all, rules).sort());
     }
   });
@@ -186,7 +211,7 @@ describe("createMatcher", () => {
       },
     }));
     const products: ProductSnapshot[] = Array.from({ length: 2000 }, (_, i) =>
-      wheel({ "custom.pcd": pcds[i % pcds.length], "custom.size": String(15 + (i % 8)), "custom.cb": String(56 + (i % 20)) }),
+      wheel({ tags: JSON.stringify([`Roztec:${pcds[i % pcds.length]}`]), "custom.size": String(15 + (i % 8)), "custom.cb": String(56 + (i % 20)) }),
     );
     const started = Date.now();
     const match = createMatcher(collections, rules);
@@ -212,7 +237,7 @@ describe("productSearchQuery", () => {
 
   it("expresses every condition and the vendor exclusions", () => {
     expect(productSearchQuery(gle, rules)).toBe(
-      '(metafields.custom.pcd:"5x112") AND ' +
+      '(tag:"Roztec:5x112") AND ' +
         "((metafields.custom.size:>=21 AND metafields.custom.size:<=22)) AND " +
         "metafields.custom.cb:>=66.5 AND metafields.custom.inner_mm:<216.6 AND " +
         'metafields.custom.outer_mm:<125.5 AND -vendor:"AEZ" AND -vendor:"Dotz" AND -vendor:"Dezent"',
@@ -221,7 +246,7 @@ describe("productSearchQuery", () => {
 
   it("searches every spelling the rules treat as equal", () => {
     const q = productSearchQuery({ ...gle, fields: { ...gle.fields, "custom.ymm_pcd": '["5x114,3"]' } }, rules);
-    expect(q).toContain('metafields.custom.pcd:"5x114,3" OR metafields.custom.pcd:"5x114.3"');
+    expect(q).toContain('tag:"Roztec:5x114,3" OR tag:"Roztec:5x114.3"');
   });
 
   it("returns null when the collection lacks a value", () => {

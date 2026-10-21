@@ -30,6 +30,8 @@ export interface Condition {
   productField: string;
   operator: Operator;
   source: ValueSource;
+  /** Text put before each compared value, e.g. "Roztec:" so tag "Roztec:5x112" matches PCD "5x112". */
+  valuePrefix?: string;
 }
 
 export interface RuleSet {
@@ -111,9 +113,10 @@ export const DEFAULT_RULE_SET: RuleSet = {
   collectionFilter: { key: "custom.ucel", value: "YMM Cloudflare" },
   conditions: [
     {
-      productField: "custom.pcd",
+      productField: "tags",
       operator: "eq",
       source: { type: "collection", key: "custom.ymm_pcd" },
+      valuePrefix: "Roztec:",
     },
     {
       productField: "custom.size",

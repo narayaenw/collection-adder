@@ -77,8 +77,8 @@ interface ParsedValue {
   ranges: [number, number][];
 }
 
-function parse(raw: string | null | undefined): ParsedValue {
-  const items = toList(raw);
+function parse(raw: string | null | undefined, prefix = ""): ParsedValue {
+  const items = prefix ? toList(raw).map((item) => prefix + item) : toList(raw);
   return {
     keys: items.map(equalityKey),
     numbers: items.map(toNumber).filter((n): n is number => n !== null),
@@ -88,19 +88,30 @@ function parse(raw: string | null | undefined): ParsedValue {
 
 const constantCache = new Map<string, ParsedValue>();
 
-function parsedConstant(value: string): ParsedValue {
-  let parsed = constantCache.get(value);
+function parsedConstant(value: string, prefix: string): ParsedValue {
+  const cacheKey = `${prefix}\u0000${value}`;
+  let parsed = constantCache.get(cacheKey);
   if (!parsed) {
-    parsed = parse(value);
-    constantCache.set(value, parsed);
+    parsed = parse(value, prefix);
+    constantCache.set(cacheKey, parsed);
   }
   return parsed;
 }
 
 function targetValue(condition: Condition, collection: FieldMap): ParsedValue {
+  const prefix = condition.valuePrefix ?? "";
   return condition.source.type === "collection"
-    ? parse(collection[condition.source.key])
-    : parsedConstant(condition.source.value);
+    ? parse(collection[condition.source.key], prefix)
+    : parsedConstant(condition.source.value, prefix);
+}
+
+/** Values the condition compares with, prefix included. */
+function targetItems(condition: Condition, collection: FieldMap): string[] {
+  const items = toList(
+    condition.source.type === "collection" ? collection[condition.source.key] : condition.source.value,
+  );
+  const prefix = condition.valuePrefix ?? "";
+  return prefix ? items.map((item) => prefix + item) : items;
 }
 
 function hasCommonKey(p: string[], t: string[]): boolean {
@@ -346,11 +357,7 @@ function spellings(value: string): string[] {
 export function productSearchQuery(collection: CollectionSnapshot, rules: RuleSet): string | null {
   const parts: string[] = [];
   for (const condition of rules.conditions) {
-    const items = toList(
-      condition.source.type === "collection"
-        ? collection.fields[condition.source.key]
-        : condition.source.value,
-    );
+    const items = targetItems(condition, collection.fields);
     if (items.length === 0) return null;
     const field = searchField(condition.productField);
     const numbers = items.map(toNumber).filter((n): n is number => n !== null);
@@ -405,6 +412,9 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
     const productField = String(c.productField ?? "").trim();
     const operator = String(c.operator ?? "") as Condition["operator"];
     const source = (c.source ?? {}) as Record<string, unknown>;
+    // Only trailing spaces are trimmed: "Roztec:" stays as typed.
+    const valuePrefix = String(c.valuePrefix ?? "").replace(/\s+$/, "");
+    const extra = valuePrefix ? { valuePrefix } : {};
 
     if (!PRODUCT_BUILTIN_FIELDS.includes(productField) && !METAFIELD_KEY.test(productField)) {
       errors.push(`Řádek ${row}: neplatné pole produktu "${productField}" (např. custom.pcd nebo vendor).`);
@@ -414,11 +424,11 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
     if (source.type === "collection") {
       const key = String(source.key ?? "").trim();
       if (!METAFIELD_KEY.test(key)) errors.push(`Řádek ${row}: neplatné metapole kolekce "${key}".`);
-      conditions.push({ productField, operator, source: { type: "collection", key } });
+      conditions.push({ productField, operator, source: { type: "collection", key }, ...extra });
     } else if (source.type === "value") {
       const value = String(source.value ?? "").trim();
       if (!value) errors.push(`Řádek ${row}: chybí pevná hodnota.`);
-      conditions.push({ productField, operator, source: { type: "value", value } });
+      conditions.push({ productField, operator, source: { type: "value", value }, ...extra });
     } else {
       errors.push(`Řádek ${row}: neznámý zdroj hodnoty.`);
     }

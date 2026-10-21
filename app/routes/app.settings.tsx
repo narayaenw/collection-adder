@@ -24,6 +24,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const operators = all("operator");
   const sourceTypes = all("sourceType");
   const sourceValues = all("sourceValue");
+  const valuePrefixes = all("valuePrefix");
 
   const input = {
     collectionFilter: { key: form.get("filterKey"), value: form.get("filterValue") },
@@ -34,6 +35,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         sourceTypes[i] === "value"
           ? { type: "value", value: sourceValues[i] }
           : { type: "collection", key: sourceValues[i] },
+      valuePrefix: valuePrefixes[i] ?? "",
     })),
     excludedVendors: String(form.get("excludedVendors") ?? "").split(/\r?\n|,/),
     carMatch: {
@@ -153,7 +155,9 @@ export default function Settings() {
         <s-section heading="Podmínky (musí platit všechny)">
           <s-paragraph>
             Pole produktu je metapole ve tvaru namespace.key (např. custom.pcd), nebo vendor,
-            product_type, tags. Seznamové hodnoty stačí, když se shoduje kterákoli z nich.
+            product_type, tags. Seznamové hodnoty stačí, když se shoduje kterákoli z nich. Předpona se
+            přidá před každou porovnávanou hodnotu: tags + „Roztec:“ + custom.ymm_pcd hledá tag
+            Roztec:5x112.
           </s-paragraph>
           <s-stack direction="block" gap="base">
             {rows.map(({ key, condition }) => (
@@ -184,6 +188,12 @@ export default function Settings() {
                       : condition.source.value
                   }
                   placeholder="custom.ymm_pcd"
+                />
+                <s-text-field
+                  name="valuePrefix"
+                  label="Předpona hodnoty"
+                  value={condition.valuePrefix ?? ""}
+                  placeholder="Roztec:"
                 />
                 <s-button
                   type="button"

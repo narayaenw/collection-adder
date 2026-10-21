@@ -9,7 +9,7 @@ Shopify aplikace, která přiřazuje produkty (alu kola) do kolekcí podle pravi
 
   | Produkt | Podmínka | Kolekce |
   |---|---|---|
-  | `custom.pcd` | je rovno některé z hodnot | `custom.ymm_pcd` |
+  | `tags` | je rovno některé z hodnot, s předponou `Roztec:` (tag `Roztec:5x112`) | `custom.ymm_pcd` |
   | `custom.size` | v rozsahu (`16-17` = 16 až 17 včetně) | `custom.ymm_size` |
   | `custom.cb` | větší nebo rovno | `custom.ymm_cb` |
   | `custom.inner_mm` | menší než | `custom.ymm_inner_cb` |
