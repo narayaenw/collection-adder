@@ -4,9 +4,15 @@ import { recordCheck } from "./changes.server";
 import { loadRuleCollection } from "./collections.server";
 import { isParentCollection } from "./rules/engine";
 import { unmatchedProducts } from "./rules/removal";
-import type { RuleSet } from "./rules/types";
+import type { ProductSnapshot, RuleSet } from "./rules/types";
 import { assertNoUserErrors, chunk, gql, type AdminClient } from "./shopify/api.server";
 import { COLLECTION_REMOVE_PRODUCTS, collectionRuleProductsQuery, toProductSnapshot } from "./shopify/queries";
+
+/** Removal counts as a sentence for job results. */
+export function removalSummary(counts: { checked: number; unmatched: number }, remove: boolean) {
+  return `${counts.checked} produktů, nevyhovuje ${counts.unmatched}` +
+    (counts.unmatched ? (remove ? ", odebráno." : " (jen nanečisto).") : ".");
+}
 
 /**
  * Finds the products of one rule collection that the rules no longer put there and records
@@ -20,24 +26,23 @@ export async function cleanCollection(
 ) {
   const result = await cleanOne(admin, shop, rules, options);
   if (typeof result === "string") return result;
-  return `${result.checked} produktů, nevyhovuje ${result.unmatched}` +
-    (result.unmatched ? (options.remove ? ", odebráno." : " (jen nanečisto).") : ".");
+  return removalSummary(result, options.remove);
 }
 
-/** Like cleanCollection, but returns counts (or the reason the collection was skipped). */
-export async function cleanOne(
-  admin: AdminClient,
-  shop: string,
-  rules: RuleSet,
-  { collectionId, runId, remove }: { collectionId: string; runId: string; remove: boolean },
-): Promise<string | { checked: number; unmatched: number }> {
-  const startedAt = new Date();
-  const collection = await loadRuleCollection(shop, collectionId);
-  if (!collection) return "Kolekce není v přehledu kolekcí s pravidly, přeskočeno.";
-  if (isParentCollection(collection)) return "Nadřazená kolekce, přeskočeno.";
+/** Products of a collection with the fields the rules read, read once for filling and removal. */
+export interface CollectionContents {
+  products: ProductSnapshot[];
+  titles: Map<string, string>;
+}
 
+/** Current products of a manual collection with rule fields, or why it can't be used. */
+export async function readCollectionContents(
+  admin: AdminClient,
+  rules: RuleSet,
+  collectionId: string,
+): Promise<string | CollectionContents> {
   const query = collectionRuleProductsQuery(rules);
-  const products = [];
+  const products: ProductSnapshot[] = [];
   const titles = new Map<string, string>();
   let after: string | null = null;
   do {
@@ -53,6 +58,28 @@ export async function cleanOne(
     const page = data.collection.products.pageInfo;
     after = page.hasNextPage ? page.endCursor : null;
   } while (after);
+  return { products, titles };
+}
+
+/**
+ * Like cleanCollection, but returns counts (or the reason the collection was skipped).
+ * `preread` passes products already read, read no earlier than its `startedAt`.
+ */
+export async function cleanOne(
+  admin: AdminClient,
+  shop: string,
+  rules: RuleSet,
+  { collectionId, runId, remove }: { collectionId: string; runId: string; remove: boolean },
+  preread?: { contents: CollectionContents; startedAt: Date },
+): Promise<string | { checked: number; unmatched: number }> {
+  const startedAt = preread?.startedAt ?? new Date();
+  const collection = await loadRuleCollection(shop, collectionId);
+  if (!collection) return "Kolekce není v přehledu kolekcí s pravidly, přeskočeno.";
+  if (isParentCollection(collection)) return "Nadřazená kolekce, přeskočeno.";
+
+  const contents = preread?.contents ?? (await readCollectionContents(admin, rules, collectionId));
+  if (typeof contents === "string") return contents;
+  const { products, titles } = contents;
 
   const unmatched = unmatchedProducts(collection, products, rules);
 
