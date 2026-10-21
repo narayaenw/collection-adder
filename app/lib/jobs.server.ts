@@ -18,7 +18,7 @@ import {
 } from "./rules/engine";
 import type { CollectionSnapshot, ProductSnapshot, RuleSet } from "./rules/types";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
-import { cleanCollection, cleanOne } from "./removal.server";
+import { cleanCollection, cleanOne, readCollectionContents, removalSummary } from "./removal.server";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -103,10 +103,18 @@ async function collectionProducts(admin: AdminClient, id: string): Promise<Produ
 
 /**
  * Fills collections using Shopify product search: only products that can match the rules are
- * read, so one collection takes seconds instead of a full export. Collections missing from
- * the app's overview are returned for the full export instead.
+ * read, so one collection takes seconds instead of a full export. With `removal`, products the
+ * rules no longer put in a collection are taken out too, from the same read of its products.
+ * Collections missing from the app's overview are returned for the full export instead.
+ * Returns the collections whose products changed, for sorting.
  */
-async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet, ids: Set<string>) {
+async function evaluateBySearch(
+  admin: AdminClient,
+  shop: string,
+  rules: RuleSet,
+  ids: Set<string>,
+  removal?: { runId: string },
+) {
   const collections = await loadRuleCollections(shop);
   const byId = new Map(collections.map((c) => [c.id, c]));
 
@@ -131,20 +139,44 @@ async function evaluateBySearch(admin: AdminClient, shop: string, rules: RuleSet
   const rest = new Set<string>();
   const changed = new Set<string>();
   let added = 0;
+  const removed = { checked: 0, unmatched: 0, skipped: [] as string[] };
   for (const id of ids) {
     const collection = byId.get(id);
     if (!collection) {
       rest.add(id);
       continue;
     }
-    const existing = new Set((await collectionProducts(admin, id)).map((p) => p.id));
+    const startedAt = new Date();
+    const contents = removal ? await readCollectionContents(admin, rules, id) : null;
+    if (typeof contents === "string") {
+      // Smart or deleted collection: products can't be added or removed by the app.
+      removed.skipped.push(contents);
+      continue;
+    }
+    const existing = new Set(
+      (contents ? contents.products : await collectionProducts(admin, id)).map((p) => p.id),
+    );
     const toAdd = (await searchMatches(collection)).filter((p) => !existing.has(p));
     await addProducts(admin, id, toAdd);
     added += toAdd.length;
     if (toAdd.length > 0) changed.add(id);
+
+    if (removal && contents) {
+      // Products just added match the rules, so checking the earlier contents is enough.
+      const counts = await cleanOne(admin, shop, rules, { collectionId: id, runId: removal.runId, remove: true }, {
+        contents,
+        startedAt,
+      });
+      if (typeof counts === "string") {
+        removed.skipped.push(counts);
+      } else {
+        removed.checked += counts.checked;
+        removed.unmatched += counts.unmatched;
+        if (counts.unmatched > 0) changed.add(id);
+      }
+    }
   }
-  await queueSorting(shop, rules, changed);
-  return { checked, added, rest };
+  return { checked, added, rest, changed, removed };
 }
 
 /** Queues additions planned from a full product export. */
@@ -240,13 +272,23 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
   async "evaluate-collection"(shop, payload, jobId) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
-    const { synced, parent } = await syncCollection(admin, shop, rules, payload.collectionId);
-    if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
-    if (parent) return "Nadřazená kolekce, přeskočeno (produkty dostává z podkolekcí).";
-    const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]));
+    // Part of a list evaluation: the list job already synced the collection and skipped parents.
+    const fromList = payload.fromList === true;
+    if (!fromList) {
+      const { synced, parent } = await syncCollection(admin, shop, rules, payload.collectionId);
+      if (!synced) return "Kolekce nemá pravidla (nebo je smart kolekce).";
+      if (parent) return "Nadřazená kolekce, přeskočeno (produkty dostává z podkolekcí).";
+    }
+    const runId: string = payload.runId ?? jobId;
+    // With live removal on, products the rules no longer put here are taken out too.
+    const removal = rules.removal.enabled ? { runId } : undefined;
+    const fast = await evaluateBySearch(admin, shop, rules, new Set([payload.collectionId]), removal);
     let result: string;
+    let changed = fast.changed.size > 0;
     if (fast.rest.size === 0) {
+      if (fast.removed.skipped.length > 0) return fast.removed.skipped[0];
       result = `Prověřeno ${fast.checked} produktů, přidáno ${fast.added}.`;
+      if (removal) result += ` Odebírání: ${removalSummary(fast.removed, true)}`;
     } else {
       const { additions, productCount } = await planAdditions(
         admin,
@@ -256,19 +298,20 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       const toAdd = additions.get(payload.collectionId) ?? [];
       await addProducts(admin, payload.collectionId, toAdd);
       result = `Prověřeno ${productCount} produktů, přidáno ${toAdd.length}.`;
+      changed ||= toAdd.length > 0;
+      if (removal) {
+        const counts = await cleanOne(admin, shop, rules, { collectionId: payload.collectionId, runId, remove: true });
+        if (typeof counts === "string") {
+          result += ` Odebírání: ${counts}`;
+        } else {
+          result += ` Odebírání: ${removalSummary(counts, true)}`;
+          changed ||= counts.unmatched > 0;
+        }
+      }
     }
-    // With live removal on, products the rules no longer put here are taken out too.
-    if (rules.removal.enabled) {
-      const cleaned = await cleanCollection(admin, shop, rules, {
-        collectionId: payload.collectionId,
-        runId: jobId,
-        remove: true,
-      });
-      result += ` Odebírání: ${cleaned}`;
-    }
-    // Checking one collection also sorts it, even when nothing changed; queued last so the
-    // sort sees the collection after removal.
-    await queueSorting(shop, rules, [payload.collectionId]);
+    // Checking one collection by hand also sorts it, even when nothing changed; queued last so
+    // the sort sees the collection after removal.
+    if (!fromList || changed) await queueSorting(shop, rules, [payload.collectionId]);
     return result;
   },
 
@@ -291,28 +334,13 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const skippedSuffix = skippedText ? ` (${skippedText})` : "";
 
     // Search per collection pays off for a few collections; many at once share one export.
+    // Each collection is its own job, so the queue runs them in parallel and none of them
+    // comes near the request time limit.
     if (ids.size <= SEARCH_LIMIT) {
-      const fast = await evaluateBySearch(admin, shop, rules, ids);
-      let message = `${ids.size - fast.rest.size} kolekcí: prověřeno ${fast.checked} produktů, ` +
-        `přidáno ${fast.added}${skippedSuffix}.`;
-      if (fast.rest.size > 0) {
-        const { additions } = await planAdditions(admin, shop, fast.rest);
-        message += ` ${fast.rest.size} kolekcí mimo přehled: naplánováno ` +
-          `${await queueAdditions(shop, additions)} přiřazení.`;
+      for (const collectionId of ids) {
+        await enqueueJob(shop, "evaluate-collection", { collectionId, runId: jobId, fromList: true });
       }
-      // With live removal on, products the rules no longer put here are taken out too.
-      if (rules.removal.enabled) {
-        let checked = 0;
-        let unmatched = 0;
-        for (const collectionId of ids) {
-          const counts = await cleanOne(admin, shop, rules, { collectionId, runId: jobId, remove: true });
-          if (typeof counts === "string") continue;
-          checked += counts.checked;
-          unmatched += counts.unmatched;
-        }
-        message += ` Odebírání: ${checked} produktů, nevyhovuje a odebráno ${unmatched}.`;
-      }
-      return message;
+      return `Naplánováno vyhodnocení ${ids.size} kolekcí, každá jako samostatná úloha${skippedSuffix}.`;
     }
     const { additions, productCount } = await planAdditions(admin, shop, ids);
     let message = `Prověřeno ${productCount} produktů pro ${ids.size} kolekcí${skippedSuffix}` +
