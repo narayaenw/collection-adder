@@ -17,8 +17,7 @@ const ymm = (id: string, pcd: string, extra: FieldMap = {}): CollectionSnapshot 
 
 const wheel = (fields: FieldMap = {}): FieldMap => ({
   vendor: "Brock",
-  tags: "[]",
-  "custom.pcd": '["4x98"]',
+  tags: '["Roztec:4x98"]',
   "custom.size": "17",
   "custom.cb": "58.1",
   "custom.inner_mm": "140",
@@ -45,7 +44,7 @@ describe("collectionsAffectedByProducts", () => {
   it("removal revisits collections the product stopped matching, with their parents", () => {
     const previous = new Map([["x", wheel()]]);
     const result = collectionsAffectedByProducts("clean", DEFAULT_RULE_SET, collections, previous, [
-      { id: "x", fields: wheel({ "custom.pcd": '["5x112"]' }) },
+      { id: "x", fields: wheel({ tags: '["Roztec:5x112"]' }) },
     ]);
     expect(result.changedProducts).toBe(1);
     expect([...result.collectionIds].sort()).toEqual(["a", "p"]);

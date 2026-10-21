@@ -12,7 +12,7 @@ describe("parseProductRows", () => {
     ];
     const { products, memberships } = parseProductRows(rows, DEFAULT_RULE_SET);
     expect(products.map((p) => p.id)).toEqual(["gid://shopify/Product/1", "gid://shopify/Product/2"]);
-    expect(products[0].fields).toMatchObject({ vendor: "Brock", "custom.pcd": '["4x98"]', "custom.size": null, tags: '["a"]' });
+    expect(products[0].fields).toMatchObject({ vendor: "Brock", "custom.size": '["4x98"]', "custom.cb": null, tags: '["a"]' });
     expect([...memberships.get("gid://shopify/Product/1")!]).toEqual([
       "gid://shopify/Collection/10",
       "gid://shopify/Collection/11",

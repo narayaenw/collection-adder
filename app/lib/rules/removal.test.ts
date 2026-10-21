@@ -20,7 +20,7 @@ const wheel = (id: string, fields: Record<string, string | null> = {}): ProductS
   id,
   fields: {
     vendor: "Brock",
-    "custom.pcd": '["4x98"]',
+    tags: '["Roztec:4x98"]',
     "custom.size": "17",
     "custom.cb": "58.1",
     "custom.inner_mm": "140",
@@ -33,7 +33,7 @@ describe("unmatchedProducts", () => {
   const bmw = ymm("c1", "4x98", "BMW");
 
   it("keeps matching products and returns the rest", () => {
-    const products = [wheel("p1"), wheel("p2", { "custom.pcd": '["5x112"]' }), wheel("p3", { vendor: "AEZ" })];
+    const products = [wheel("p1"), wheel("p2", { tags: '["Roztec:5x112"]' }), wheel("p3", { vendor: "AEZ" })];
     expect(unmatchedProducts(bmw, products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
   });
 
