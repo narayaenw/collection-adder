@@ -99,7 +99,12 @@ export type FieldMap = Record<string, string | null | undefined>;
 export interface ProductSnapshot {
   id: string;
   fields: FieldMap;
+  /** Shopify product status (ACTIVE, DRAFT, ARCHIVED, UNLISTED), when it was read. */
+  status?: string;
 }
+
+/** Products with this status are never put in rule collections and are taken out of them. */
+export const EXCLUDED_PRODUCT_STATUS = "UNLISTED";
 
 export interface CollectionSnapshot {
   id: string;
