@@ -36,7 +36,9 @@ function productFields(node: Record<string, any>, keys: string[]): FieldMap {
 }
 
 export function toProductSnapshot(node: Record<string, any>, rules: RuleSet): ProductSnapshot {
-  return { id: node.id, fields: productFields(node, productMetafieldKeys(rules)) };
+  const snapshot: ProductSnapshot = { id: node.id, fields: productFields(node, productMetafieldKeys(rules)) };
+  if (typeof node.status === "string") snapshot.status = node.status;
+  return snapshot;
 }
 
 export function toCollectionSnapshot(node: Record<string, any>, rules: RuleSet): CollectionSnapshot {
@@ -77,14 +79,14 @@ export function collectionQuery(rules: RuleSet): string {
 /** All products with the fields the rules need and their current collections. */
 /**
  * All products with rule fields; withCollections adds each product's current collections and
- * activeOnly leaves out draft and archived products.
+ * activeOnly leaves out draft and archived products. Unlisted products are always left out.
  */
 export function productsBulkQuery(
   rules: RuleSet,
   { withCollections = true, activeOnly = false } = {},
 ): string {
   return `{
-  products${activeOnly ? '(query: "status:active")' : ""} {
+  products(query: "${activeOnly ? "status:active" : "-status:unlisted"}") {
     edges {
       node {
         id
@@ -168,6 +170,7 @@ export function collectionRuleProductsQuery(rules: RuleSet): string {
         nodes {
           id
           title
+          status
           ${usedBuiltinSelections(rules)}
           ${metafieldSelections(productMetafieldKeys(rules))}
         }

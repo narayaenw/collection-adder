@@ -37,6 +37,11 @@ describe("unmatchedProducts", () => {
     expect(unmatchedProducts(bmw, products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2", "p3"]);
   });
 
+  it("removes unlisted products even when they match", () => {
+    const products = [wheel("p1", {}), { ...wheel("p2"), status: "UNLISTED" }, { ...wheel("p3"), status: "ACTIVE" }];
+    expect(unmatchedProducts(bmw, products, DEFAULT_RULE_SET).map((p) => p.id)).toEqual(["p2"]);
+  });
+
   it("removes Racing Line products made for another car", () => {
     const products = [
       wheel("p1", { vendor: "Racing Line", "custom.auto": '["BMW"]' }),
