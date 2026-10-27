@@ -78,3 +78,15 @@ gcloud scheduler jobs create http collection-adder-sync --location=$REGION \
 Pak v `shopify.app.toml` nastav `client_id` a `application_url` na `$URL` a spusť `npm run deploy` (nahraje webhooky a odkazy do adminu). Po instalaci v obchodě klikni v aplikaci na **Synchronizovat kolekce** a potom **Vyhodnotit vše**.
 
 Proměnné prostředí shrnuje [.env.example](.env.example).
+
+## Vypnutí aplikace
+
+`JOBS_DISABLED=1` v proměnných Cloud Run zastaví všechny úlohy (fronta, noční běh i vyhodnocení produktu z adminu). Úlohy se neztratí, Cloud Tasks je zkouší znovu.
+
+```
+gcloud run services update collection-adder --region=europe-west3 --project=collection-adder --update-env-vars=JOBS_DISABLED=1
+# zapnutí zpět:
+gcloud run services update collection-adder --region=europe-west3 --project=collection-adder --remove-env-vars=JOBS_DISABLED
+```
+
+Pokud ve frontě úlohy čekat nemají, pozastav i frontu: `gcloud tasks queues pause collection-adder --location=europe-west3 --project=collection-adder`.

@@ -9,3 +9,11 @@ export function hasValidJobsSecret(request: Request): boolean {
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+/**
+ * Kill switch: with JOBS_DISABLED=1 on Cloud Run the app runs no jobs. Cloud Tasks gets 503 and
+ * keeps the task for a later retry, so nothing is lost while the switch is on.
+ */
+export function jobsDisabled(): boolean {
+  return ["1", "true", "yes"].includes((process.env.JOBS_DISABLED ?? "").trim().toLowerCase());
+}

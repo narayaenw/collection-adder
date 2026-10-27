@@ -3,6 +3,7 @@ import { Form, useActionData, useLoaderData, useNavigation } from "react-router"
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { evaluateProduct } from "../lib/evaluate.server";
+import { jobsDisabled } from "../lib/jobs-auth.server";
 import { enqueueJob } from "../lib/queue.server";
 import { gql, type AdminClient } from "../lib/shopify/api.server";
 import { toGid } from "../lib/shopify/queries";
@@ -39,6 +40,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     await enqueueJob(session.shop, "evaluate-collection", { collectionId: id });
     return { message: "Vyhodnocení kolekce běží na pozadí. Výsledek uvidíte v přehledu aplikace." };
   }
+  // Evaluating a product runs right here, not in the queue, so the kill switch is checked too.
+  if (jobsDisabled()) return { message: "Aplikace je vypnutá (JOBS_DISABLED), produkt se nevyhodnotil." };
   const result = await evaluateProduct(admin as unknown as AdminClient, session.shop, id);
   return {
     message: result
