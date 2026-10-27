@@ -7,6 +7,7 @@ import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { countParentCollections } from "../lib/collections.server";
 import { evaluateProduct } from "../lib/evaluate.server";
+import { runJobNow } from "../lib/jobs.server";
 import { enqueueJob, resetQueue } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
 import { gql, type AdminClient } from "../lib/shopify/api.server";
@@ -191,8 +192,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
     case "evaluate-collection":
-      await enqueueJob(shop, "evaluate-collection", { collectionId: toGid("Collection", id) });
-      return { message: "Vyhodnocení kolekce spuštěno." };
+      // Started by hand: runs right away, whatever the queue or the JOBS_DISABLED switch says.
+      return { message: await runJobNow(shop, "evaluate-collection", { collectionId: toGid("Collection", id) }) };
     case "evaluate-product": {
       const productId = toGid("Product", id);
       const result = await evaluateProduct(admin as unknown as AdminClient, shop, productId);

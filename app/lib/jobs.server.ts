@@ -462,3 +462,20 @@ export async function runJob(jobId: string) {
     throw error;
   }
 }
+
+/**
+ * Runs a job right away inside the current request, bypassing the queue and the JOBS_DISABLED
+ * switch: used for evaluations started by hand, which should always run. The job row is kept so
+ * the result shows in the job list. Jobs it queues itself (e.g. sorting) still go through the queue.
+ */
+export async function runJobNow(shop: string, type: JobType, payload: Payload): Promise<string> {
+  const job = await db.job.create({ data: { shop, type, payload } });
+  try {
+    await runJob(job.id);
+  } catch {
+    // runJob already stored the failure on the job row.
+  }
+  const row = await db.job.findUnique({ where: { id: job.id }, select: { status: true, message: true } });
+  const message = row?.message ?? "";
+  return row?.status === "failed" ? `Chyba: ${message}` : message;
+}
