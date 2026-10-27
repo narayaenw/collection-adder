@@ -303,3 +303,21 @@ export const JOB_STATUS = `#graphql
   query JobStatus($id: ID!) {
     job(id: $id) { id done }
   }`;
+
+/** Products by id with the fields the rules need, plus status and title for the removal report. */
+export function productsByIdsQuery(rules: RuleSet): string {
+  return `#graphql
+  query RuleProductsByIds($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        id
+        title
+        status
+        vendor
+        productType
+        tags
+        ${metafieldSelections(productMetafieldKeys(rules))}
+      }
+    }
+  }`;
+}
