@@ -197,46 +197,63 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
   async "evaluate-group"(shop, payload) {
     const admin = await adminFor(shop);
     const rules = await getRules(shop);
-    const ids = payload.collectionIds as string[];
+    let ids = payload.collectionIds as string[];
     const removal = payload.removal ? { runId: payload.runId as string, remove: payload.remove === true } : undefined;
-    const group = await evaluateGroup(admin, shop, rules, ids, { add: payload.add === true, removal });
-    await queueSorting(shop, rules, group.changed);
-    let result = `${group.collections} z ${ids.length} kolekcí, jedno hledání: ${group.searched} produktů.`;
-    if (payload.add) result += ` Přidáno ${group.added}.`;
-    if (removal) result += ` Odebírání: ${removalSummary(group.removal, removal.remove)}`;
-    const skipped = group.removal.skipped.length;
-    return skipped ? `${result} Přeskočeno ${skipped} (${group.removal.skipped[0]})` : result;
+    // From a list evaluation: the collections are first refreshed from Shopify here, so the list
+    // job can queue its groups at once. Refreshed values may split the group, so it is regrouped.
+    let groups = [ids];
+    let skippedSync = 0;
+    if (payload.sync === true) {
+      const fresh: string[] = [];
+      for (const id of ids) {
+        const { synced, parent } = await syncCollection(admin, shop, rules, id);
+        if (synced && !parent) fresh.push(id);
+        else skippedSync++;
+      }
+      const freshSet = new Set(fresh);
+      groups = groupBySearch((await loadRuleCollections(shop)).filter((c) => freshSet.has(c.id)), rules);
+      ids = fresh;
+    }
+    let searched = 0;
+    let evaluated = 0;
+    let added = 0;
+    const removed = { checked: 0, unmatched: 0, skipped: [] as string[] };
+    for (const group of groups) {
+      const result = await evaluateGroup(admin, shop, rules, group, { add: payload.add === true, removal });
+      await queueSorting(shop, rules, result.changed);
+      searched += result.searched;
+      evaluated += result.collections;
+      added += result.added;
+      removed.checked += result.removal.checked;
+      removed.unmatched += result.removal.unmatched;
+      removed.skipped.push(...result.removal.skipped);
+    }
+    const total = (payload.collectionIds as string[]).length;
+    let result = `${evaluated} z ${total} kolekcí, hledání: ${groups.length}, ${searched} produktů.`;
+    if (payload.add) result += ` Přidáno ${added}.`;
+    if (removal) result += ` Odebírání: ${removalSummary(removed, removal.remove)}`;
+    if (skippedSync) result += ` Bez pravidel nebo nadřazené: ${skippedSync}.`;
+    const skipped = removed.skipped.length;
+    return skipped ? `${result} Přeskočeno ${skipped} (${removed.skipped[0]})` : result;
   },
 
   async "evaluate-collections"(shop, payload, jobId) {
-    const admin = await adminFor(shop);
     const rules = await getRules(shop);
-    const ids = new Set<string>();
-    let parents = 0;
-    for (const id of payload.collectionIds as string[]) {
-      const { synced, parent } = await syncCollection(admin, shop, rules, id);
-      if (synced && parent) parents++;
-      else if (synced) ids.add(id);
-    }
-    const skipped = (payload.collectionIds as string[]).length - ids.size - parents;
-    const skippedText = [
-      skipped ? `${skipped} přeskočeno, nemají pravidla` : "",
-      parents ? `${parents} nadřazených přeskočeno` : "",
-    ].filter(Boolean).join(", ");
-    if (ids.size === 0) return `Žádná kolekce ke zpracování (${skippedText}).`;
-    const skippedSuffix = skippedText ? ` (${skippedText})` : "";
-
-    // Collections with the same search share one job, so their products are searched once;
-    // each job is small enough to stay well under the request time limit.
-    const groups = groupBySearch(
-      (await loadRuleCollections(shop)).filter((c) => ids.has(c.id)),
-      rules,
-    );
+    const idSet = new Set(payload.collectionIds as string[]);
+    const ids = [...idSet];
+    // Grouped by the app's overview so the first groups start right away; each group job
+    // refreshes its collections from Shopify first. Collections missing from the overview get
+    // groups of their own.
+    const known = (await loadRuleCollections(shop)).filter((c) => idSet.has(c.id));
+    const knownIds = new Set(known.map((c) => c.id));
+    const unknown = ids.filter((id) => !knownIds.has(id));
+    const groups = [...groupBySearch(known, rules), ...chunk(unknown, 50)];
     const removal = rules.removal.enabled ? { removal: true, remove: true } : {};
     for (const collectionIds of groups) {
-      await enqueueJob(shop, "evaluate-group", { collectionIds, runId: jobId, add: true, ...removal });
+      await enqueueJob(shop, "evaluate-group", { collectionIds, runId: jobId, add: true, sync: true, ...removal });
     }
-    return `Naplánováno vyhodnocení ${ids.size} kolekcí v ${groups.length} skupinách se stejnými parametry${skippedSuffix}.`;
+    return `Naplánováno vyhodnocení ${ids.length} kolekcí v ${groups.length} skupinách se stejnými parametry` +
+      (unknown.length ? ` (${unknown.length} mimo přehled aplikace).` : ".");
   },
 
   async "evaluate-all"(shop) {
