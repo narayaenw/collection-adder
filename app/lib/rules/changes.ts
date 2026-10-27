@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createMatcher, productFieldsUsed, toList } from "./engine";
-import { SUBCOLLECTION_KEY, type CollectionSnapshot, type FieldMap, type ProductSnapshot, type RuleSet } from "./types";
+import { hasIncludedStatus, SUBCOLLECTION_KEY, type CollectionSnapshot, type FieldMap, type ProductSnapshot, type RuleSet } from "./types";
 
 /** Nightly passes that skip collections nothing has changed for. */
 export type CheckKind = "clean" | "sort";
@@ -87,7 +87,8 @@ export function collectionsAffectedByProducts(
   previous: Map<string, FieldMap>,
   current: ProductSnapshot[],
 ): { collectionIds: Set<string>; changedProducts: number } {
-  const keys = productKeysFor(kind, rules);
+  // A product leaving the active status has to leave its collections too.
+  const keys = kind === "clean" ? [...productKeysFor(kind, rules), "status"] : productKeysFor(kind, rules);
   const ruleKeys = productFieldsUsed(rules);
   const match = createMatcher(collections, rules);
   const affected = new Set<string>();
@@ -96,7 +97,9 @@ export function collectionsAffectedByProducts(
     const before = previous.get(product.id);
     if (before && stableJson(pickFields(before, keys)) === stableJson(pickFields(product.fields, keys))) continue;
     changedProducts++;
-    const now = new Set(match({ id: product.id, fields: pickFields(product.fields, ruleKeys) }));
+    const now = new Set(
+      hasIncludedStatus(product) ? match({ id: product.id, fields: pickFields(product.fields, ruleKeys) }) : [],
+    );
     const was = before ? match({ id: product.id, fields: pickFields(before, ruleKeys) }) : [];
     if (kind === "clean") {
       for (const id of was) if (!now.has(id)) affected.add(id);

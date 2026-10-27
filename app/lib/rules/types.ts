@@ -103,8 +103,14 @@ export interface ProductSnapshot {
   status?: string;
 }
 
-/** Products with this status are never put in rule collections and are taken out of them. */
-export const EXCLUDED_PRODUCT_STATUS = "UNLISTED";
+/** Only products in this status belong in rule collections (drafts, archived and unlisted don't). */
+export const INCLUDED_PRODUCT_STATUS = "ACTIVE";
+
+/** Whether a product may sit in rule collections; an unread status counts as allowed. */
+export function hasIncludedStatus(product: { status?: string; fields?: FieldMap }): boolean {
+  const status = product.status ?? product.fields?.status ?? undefined;
+  return status === undefined || status === null || status === INCLUDED_PRODUCT_STATUS;
+}
 
 export interface CollectionSnapshot {
   id: string;

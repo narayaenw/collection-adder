@@ -79,11 +79,11 @@ export function collectionQuery(rules: RuleSet): string {
 /** All products with the fields the rules need and their current collections. */
 /**
  * All products with rule fields; withCollections adds each product's current collections and
- * activeOnly leaves out draft and archived products. Unlisted products are always left out.
+ * activeOnly (default) keeps only active products; without it only unlisted ones are left out.
  */
 export function productsBulkQuery(
   rules: RuleSet,
-  { withCollections = true, activeOnly = false } = {},
+  { withCollections = true, activeOnly = true } = {},
 ): string {
   return `{
   products(query: "${activeOnly ? "status:active" : "-status:unlisted"}") {
@@ -109,6 +109,7 @@ export function productFieldsBulkQuery(metafieldKeys: string[]): string {
     edges {
       node {
         id
+        status
         vendor
         productType
         tags
@@ -124,6 +125,7 @@ export function productQuery(rules: RuleSet): string {
   query RuleProduct($id: ID!) {
     product(id: $id) {
       id
+      status
       vendor
       productType
       tags

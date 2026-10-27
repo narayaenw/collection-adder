@@ -388,7 +388,7 @@ export function productSearchQuery(collection: CollectionSnapshot, rules: RuleSe
     }
   }
   for (const vendor of rules.excludedVendors) parts.push(`-vendor:${quote(vendor)}`);
-  parts.push("-status:unlisted");
+  parts.push("status:active");
   return parts.join(" AND ");
 }
 
