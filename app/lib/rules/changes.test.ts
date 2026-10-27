@@ -41,6 +41,14 @@ describe("collectionsAffectedByProducts", () => {
     expect([...result.collectionIds]).toEqual([]);
   });
 
+  it("removal revisits the product's collections when it stops being active", () => {
+    const previous = new Map([["x", wheel({ status: "ACTIVE" })]]);
+    const result = collectionsAffectedByProducts("clean", DEFAULT_RULE_SET, collections, previous, [
+      { id: "x", fields: wheel({ status: "DRAFT" }) },
+    ]);
+    expect([...result.collectionIds].sort()).toEqual(["a", "p"]);
+  });
+
   it("removal revisits collections the product stopped matching, with their parents", () => {
     const previous = new Map([["x", wheel()]]);
     const result = collectionsAffectedByProducts("clean", DEFAULT_RULE_SET, collections, previous, [

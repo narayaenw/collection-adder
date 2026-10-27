@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import db from "../db.server";
-import { hasValidJobsSecret } from "../lib/jobs-auth.server";
+import { hasValidJobsSecret, jobsDisabled } from "../lib/jobs-auth.server";
 import { enqueueJob } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
 
@@ -14,6 +14,7 @@ const REMOVE_DELAY_SECONDS = 15 * 60;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!hasValidJobsSecret(request)) return new Response("Unauthorized", { status: 401 });
+  if (jobsDisabled()) return new Response("Jobs disabled", { status: 503 });
   const sessions = await db.session.findMany({
     where: { isOnline: false },
     select: { shop: true },

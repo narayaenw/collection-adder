@@ -35,7 +35,7 @@ function parseIds(text: string, type: "Product" | "Collection") {
 const MAX_LIST_IDS = 5000;
 
 /** Jobs created in bulk, shown as a count instead of in the job list. */
-const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection"];
+const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
 
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
@@ -239,6 +239,7 @@ const JOB_LABELS: Record<string, string> = {
   "evaluate-collection": "Vyhodnocení kolekce",
   "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
+  "evaluate-group": "Vyhodnocení skupiny kolekcí",
   "sort-all": "Řazení všech kolekcí",
   "export-plan": "Export plánu",
   "export-rule-groups": "Report shodných pravidel",

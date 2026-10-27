@@ -13,7 +13,7 @@ import { productFieldsBulkQuery, readMetafields } from "./shopify/queries";
 
 /** Product fields kept between nightly passes: everything either pass reads. */
 function storedKeys(rules: RuleSet): string[] {
-  return [...new Set([...productKeysFor("clean", rules), ...productKeysFor("sort", rules)])];
+  return [...new Set([...productKeysFor("clean", rules), ...productKeysFor("sort", rules), "status"])];
 }
 
 /** All products with the fields the nightly passes read, from one bulk export. */
@@ -24,6 +24,7 @@ async function exportProductFields(admin: AdminClient, rules: RuleSet): Promise<
   await forEachBulkRow(admin, productFieldsBulkQuery(metafieldKeys), (row) => {
     if (row.__parentId || typeof row.id !== "string" || !row.id.includes("/Product/")) return;
     const fields: FieldMap = {
+      status: row.status ?? null,
       vendor: row.vendor ?? null,
       product_type: row.productType ?? null,
       tags: Array.isArray(row.tags) ? JSON.stringify(row.tags) : null,

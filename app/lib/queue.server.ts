@@ -8,6 +8,7 @@ export type JobType =
   | "evaluate-product"
   | "evaluate-collection"
   | "evaluate-collections"
+  | "evaluate-group"
   | "evaluate-all"
   | "add-products"
   | "sort-collection"

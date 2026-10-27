@@ -240,7 +240,7 @@ describe("productSearchQuery", () => {
       '(tag:"Roztec:5x112") AND ' +
         "((metafields.custom.size:>=21 AND metafields.custom.size:<=22)) AND " +
         "metafields.custom.cb:>=66.5 AND metafields.custom.inner_mm:<216.6 AND " +
-        'metafields.custom.outer_mm:<125.5 AND -vendor:"AEZ" AND -vendor:"Dotz" AND -vendor:"Dezent" AND -status:unlisted',
+        'metafields.custom.outer_mm:<125.5 AND -vendor:"AEZ" AND -vendor:"Dotz" AND -vendor:"Dezent" AND status:active',
     );
   });
 
