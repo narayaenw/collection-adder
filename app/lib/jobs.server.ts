@@ -452,7 +452,8 @@ export async function runJob(jobId: string) {
   try {
     const handler = handlers[job.type as JobType];
     if (!handler) throw new Error(`Unknown job type ${job.type}`);
-    const message = await runInJob(jobId, () => handler(job.shop, job.payload as Payload, job.id));
+    const manual = (job.payload as Payload | null)?.manual === true;
+    const message = await runInJob(jobId, () => handler(job.shop, job.payload as Payload, job.id), manual);
     await finish("done", message);
   } catch (error) {
     if (error instanceof JobCancelledError) return;
@@ -466,10 +467,10 @@ export async function runJob(jobId: string) {
 /**
  * Runs a job right away inside the current request, bypassing the queue and the JOBS_DISABLED
  * switch: used for evaluations started by hand, which should always run. The job row is kept so
- * the result shows in the job list. Jobs it queues itself (e.g. sorting) still go through the queue.
+ * the result shows in the job list. Jobs it queues (e.g. sorting) are marked as started by hand.
  */
 export async function runJobNow(shop: string, type: JobType, payload: Payload): Promise<string> {
-  const job = await db.job.create({ data: { shop, type, payload } });
+  const job = await db.job.create({ data: { shop, type, payload: { ...payload, manual: true } } });
   try {
     await runJob(job.id);
   } catch {

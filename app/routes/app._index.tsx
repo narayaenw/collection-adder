@@ -212,9 +212,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (ids.length === 0) return { message: "Seznam neobsahuje žádné platné ID." };
       if (ids.length > MAX_LIST_IDS) return { message: `Najednou nejvýš ${MAX_LIST_IDS} ID.` };
       if (type === "Product") {
-        for (const productId of ids) await enqueueJob(shop, "evaluate-product", { productId });
+        for (const productId of ids) await enqueueJob(shop, "evaluate-product", { productId }, { manual: true });
       } else {
-        await enqueueJob(shop, "evaluate-collections", { collectionIds: ids });
+        await enqueueJob(shop, "evaluate-collections", { collectionIds: ids }, { manual: true });
       }
       const what = type === "Product" ? "produktů" : "kolekcí";
       return {

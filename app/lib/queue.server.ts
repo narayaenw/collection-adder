@@ -47,12 +47,15 @@ function runLocally(jobId: string, delaySeconds: number) {
 /** Raised inside a job whose row was cancelled by a queue reset, to stop it fanning out further. */
 export class JobCancelledError extends Error {}
 
-const currentJob = new AsyncLocalStorage<{ id: string; checkedAt: number }>();
+const currentJob = new AsyncLocalStorage<{ id: string; checkedAt: number; manual: boolean }>();
 const CANCEL_CHECK_MS = 5000;
 
-/** Runs a job's handler so that jobs it enqueues can notice it was cancelled. */
-export function runInJob<T>(jobId: string, fn: () => Promise<T>): Promise<T> {
-  return currentJob.run({ id: jobId, checkedAt: Date.now() }, fn);
+/**
+ * Runs a job's handler so that jobs it enqueues can notice it was cancelled, and so that jobs
+ * started by hand pass that on to the jobs they queue.
+ */
+export function runInJob<T>(jobId: string, fn: () => Promise<T>, manual = false): Promise<T> {
+  return currentJob.run({ id: jobId, checkedAt: Date.now(), manual }, fn);
 }
 
 async function assertCurrentJobActive() {
@@ -66,16 +69,20 @@ async function assertCurrentJobActive() {
 /**
  * Stores a job and hands it to the queue. In production Cloud Tasks calls /jobs/run, which
  * spreads work over time and retries failures; the queue's rate settings keep the app under
- * Shopify's API limits.
+ * Shopify's API limits. Jobs started by hand (`manual`, or queued by such a job) are marked so
+ * they run even with JOBS_DISABLED, and go to CLOUD_TASKS_MANUAL_QUEUE when it is set, so pausing
+ * the main queue does not hold them up.
  */
 export async function enqueueJob(
   shop: string,
   type: JobType,
   payload: Record<string, unknown> = {},
-  { delaySeconds = 0 }: { delaySeconds?: number } = {},
+  { delaySeconds = 0, manual }: { delaySeconds?: number; manual?: boolean } = {},
 ) {
   await assertCurrentJobActive();
-  const job = await db.job.create({ data: { shop, type, payload: payload as object } });
+  const isManual = manual ?? currentJob.getStore()?.manual ?? false;
+  const data = isManual ? { ...payload, manual: true } : payload;
+  const job = await db.job.create({ data: { shop, type, payload: data as object } });
   const config = cloudTasksConfig();
 
   if (!config) {
@@ -85,7 +92,11 @@ export async function enqueueJob(
 
   tasksClient ??= new CloudTasksClient();
   await tasksClient.createTask({
-    parent: tasksClient.queuePath(config.GCP_PROJECT, config.GCP_LOCATION, config.CLOUD_TASKS_QUEUE),
+    parent: tasksClient.queuePath(
+      config.GCP_PROJECT,
+      config.GCP_LOCATION,
+      (isManual && process.env.CLOUD_TASKS_MANUAL_QUEUE) || config.CLOUD_TASKS_QUEUE,
+    ),
     task: {
       httpRequest: {
         httpMethod: "POST",
