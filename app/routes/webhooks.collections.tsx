@@ -73,6 +73,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
     select: { id: true },
   });
-  if (!waiting) await enqueueJob(shop, "sync-collection", { collectionId });
+  // Only refreshes the app's copy of the collection, so it runs even while the main queue is
+  // paused or JOBS_DISABLED is set (it goes with the hand-started jobs).
+  if (!waiting) await enqueueJob(shop, "sync-collection", { collectionId }, { manual: true });
   return new Response();
 };
