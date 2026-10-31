@@ -36,6 +36,8 @@ function parseIds(text: string, type: "Product" | "Collection") {
 const MAX_LIST_IDS = 5000;
 
 /** Jobs created in bulk, shown as a count instead of in the job list. */
+/** Rows in the job table on the overview. */
+const JOB_ROWS = 100;
 const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
 
 /** The product or collection a job works on, taken from its payload. */
@@ -67,22 +69,21 @@ async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [collectionCount, parentCount, lastSync, jobs, rules, statusCounts] = await Promise.all([
+  const started = Date.now();
+  const [collectionCount, parentCount, lastSync, jobs, rules] = await Promise.all([
     db.ruleCollection.count({ where: { shop } }),
     countParentCollections(shop),
     db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } }),
     db.job.findMany({
       where: { shop, type: { notIn: BATCH_JOBS } },
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take: JOB_ROWS,
     }),
     getRules(shop),
-    db.job.groupBy({
-      by: ["status"],
-      where: { shop, type: { notIn: BATCH_JOBS } },
-      _count: { _all: true },
-    }),
   ]);
+  // Counted over the shown rows only: a count over the whole job history made the page slow.
+  const statusCounts: Record<string, number> = {};
+  for (const j of jobs) statusCounts[j.status] = (statusCounts[j.status] ?? 0) + 1;
   const targets = jobs.map((j) => jobTarget(j.payload));
   const titles = await loadTitles(
     admin as unknown as AdminClient,
@@ -104,13 +105,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shop, type: "remove-unmatched" },
     orderBy: { createdAt: "desc" },
   });
-  const removalCounts = lastRemoval
-    ? await db.removalItem.groupBy({
-        by: ["removed"],
-        where: { shop, runId: lastRemoval.id },
-        _count: { _all: true },
-      })
-    : [];
+  const [removalFound, removalRemoved] = lastRemoval
+    ? await Promise.all([
+        db.removalItem.count({ where: { shop, runId: lastRemoval.id } }),
+        db.removalItem.count({ where: { shop, runId: lastRemoval.id, removed: true } }),
+      ])
+    : [0, 0];
+  console.log(`Overview loaded in ${Date.now() - started} ms`);
   return {
     // Parents are only sorted; filling and removal skip them.
     collectionCount: collectionCount - parentCount,
@@ -124,8 +125,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             id: lastRemoval.id,
             createdAt: lastRemoval.createdAt.toISOString(),
             message: lastRemoval.message,
-            found: removalCounts.reduce((sum, c) => sum + c._count._all, 0),
-            removed: removalCounts.find((c) => c.removed)?._count._all ?? 0,
+            found: removalFound,
+            removed: removalRemoved,
           }
         : null,
     },
@@ -133,7 +134,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     pendingAdds,
     pendingSorts,
     filter: rules.collectionFilter,
-    jobCounts: Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all])) as Record<string, number>,
+    jobCounts: statusCounts,
     jobs: jobs.map((j, i) => ({
       id: j.id,
       target: targets[i]
@@ -482,7 +483,7 @@ export default function Index() {
       <s-section heading="Poslední úlohy">
         {data.jobs.length > 0 && (
           <s-paragraph>
-            Celkem {Object.values(data.jobCounts).reduce((sum, n) => sum + n, 0)} úloh:{" "}
+            Posledních {data.jobs.length} úloh:{" "}
             {Object.keys(STATUS_LABELS)
               .map((status) => `${STATUS_LABELS[status]} ${data.jobCounts[status] ?? 0}`)
               .join(", ")}
