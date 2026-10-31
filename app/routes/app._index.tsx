@@ -67,51 +67,60 @@ async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const steps: Record<string, number> = {};
+  const timed = async <T,>(label: string, work: Promise<T>): Promise<T> => {
+    const t = Date.now();
+    try {
+      return await work;
+    } finally {
+      steps[label] = Date.now() - t;
+    }
+  };
+  const { admin, session } = await timed("auth", authenticate.admin(request));
   const shop = session.shop;
   const started = Date.now();
   const [collectionCount, parentCount, lastSync, jobs, rules] = await Promise.all([
-    db.ruleCollection.count({ where: { shop } }),
-    countParentCollections(shop),
-    db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } }),
-    db.job.findMany({
+    timed("collectionCount", db.ruleCollection.count({ where: { shop } })),
+    timed("parentCount", countParentCollections(shop)),
+    timed("lastSync", db.ruleCollection.aggregate({ where: { shop }, _max: { syncedAt: true } })),
+    timed("jobs", db.job.findMany({
       where: { shop, type: { notIn: BATCH_JOBS } },
       orderBy: { createdAt: "desc" },
       take: JOB_ROWS,
-    }),
-    getRules(shop),
+    })),
+    timed("rules", getRules(shop)),
   ]);
   // Counted over the shown rows only: a count over the whole job history made the page slow.
   const statusCounts: Record<string, number> = {};
   for (const j of jobs) statusCounts[j.status] = (statusCounts[j.status] ?? 0) + 1;
   const targets = jobs.map((j) => jobTarget(j.payload));
-  const titles = await loadTitles(
+  const titles = await timed("titles", loadTitles(
     admin as unknown as AdminClient,
     [...new Set(targets.filter((id): id is string => id !== null))],
-  );
+  ));
   const exportJobIds = jobs
     .filter((j) => ["export-plan", "export-rule-groups", "remove-smart-rules"].includes(j.type) && j.status === "done").map((j) => j.id);
-  const exportFiles = await db.exportFile.findMany({
+  const exportFiles = await timed("exportFiles", db.exportFile.findMany({
     where: { shop, OR: exportJobIds.map((id) => ({ id: { startsWith: `${id}-` } })) },
     select: { id: true },
     orderBy: { createdAt: "asc" },
-  });
-  const [pendingAdds, pendingSorts, pendingCleans] = await Promise.all(
+  }));
+  const [pendingAdds, pendingSorts, pendingCleans] = await timed("pending", Promise.all(
     BATCH_JOBS.map((type) =>
       db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
     ),
-  );
-  const lastRemoval = await db.job.findFirst({
+  ));
+  const lastRemoval = await timed("lastRemoval", db.job.findFirst({
     where: { shop, type: "remove-unmatched" },
     orderBy: { createdAt: "desc" },
-  });
+  }));
   const [removalFound, removalRemoved] = lastRemoval
-    ? await Promise.all([
+    ? await timed("removalCounts", Promise.all([
         db.removalItem.count({ where: { shop, runId: lastRemoval.id } }),
         db.removalItem.count({ where: { shop, runId: lastRemoval.id, removed: true } }),
-      ])
+      ]))
     : [0, 0];
-  console.log(`Overview loaded in ${Date.now() - started} ms`);
+  console.log(`Overview loaded in ${Date.now() - started} ms ${JSON.stringify(steps)}`);
   return {
     // Parents are only sorted; filling and removal skip them.
     collectionCount: collectionCount - parentCount,
