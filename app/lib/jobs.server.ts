@@ -14,6 +14,7 @@ import { enqueueJob, JobCancelledError, runInJob, type JobType } from "./queue.s
 import { createMatcher, isVendorExcluded } from "./rules/engine";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
 import { cleanCollection, removalSummary } from "./removal.server";
+import { parentCollectionIds, syncParent } from "./parents.server";
 import { getRules } from "./settings.server";
 import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -49,7 +50,7 @@ async function addProducts(admin: AdminClient, collectionId: string, productIds:
 
 /**
  * Reads all products once and returns, per collection, the matching products not in it yet.
- * Parent collections are left out: Shopify passes their subcollections' products up itself.
+ * Parent collections are left out: "sync-parent" fills them from their subcollections.
  */
 async function planAdditions(admin: AdminClient, shop: string, collectionIds?: Set<string>) {
   const rules = await getRules(shop);
@@ -443,6 +444,21 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       runId: payload.runId,
       remove: payload.remove === true,
     });
+  },
+
+  /** Makes a parent collection hold exactly its subcollections' products. */
+  async "sync-parent"(shop, payload) {
+    const admin = await adminFor(shop);
+    const { message, changed } = await syncParent(admin, shop, payload.collectionId);
+    if (changed) await queueSorting(shop, await getRules(shop), [payload.collectionId]);
+    return message;
+  },
+
+  /** Queues "sync-parent" for every parent collection. */
+  async "sync-parents"(shop) {
+    const ids = await parentCollectionIds(shop);
+    for (const collectionId of ids) await enqueueJob(shop, "sync-parent", { collectionId });
+    return `Naplánováno srovnání ${ids.length} nadřazených kolekcí s podkolekcemi.`;
   },
 
   async "add-products"(shop, payload) {

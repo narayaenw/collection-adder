@@ -38,7 +38,7 @@ const MAX_LIST_IDS = 5000;
 /** Jobs created in bulk, shown as a count instead of in the job list. */
 /** Rows in the job table on the overview. */
 const JOB_ROWS = 100;
-const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
+const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group", "sync-parent"];
 
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
@@ -201,6 +201,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "sort-all":
       await enqueueJob(shop, "sort-all");
       return { message: "Řazení všech kolekcí spuštěno." };
+    case "sync-parents":
+      await enqueueJob(shop, "sync-parents", {}, { manual: true });
+      return { message: "Srovnání nadřazených kolekcí s podkolekcemi spuštěno." };
     case "evaluate-collection":
       // Started by hand: runs right away, whatever the queue or the JOBS_DISABLED switch says.
       return { message: await runJobNow(shop, "evaluate-collection", { collectionId: toGid("Collection", id) }) };
@@ -256,6 +259,8 @@ const JOB_LABELS: Record<string, string> = {
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
   "remove-smart-rules": "Smazání pravidel smart kolekcí",
+  "sync-parents": "Srovnání nadřazených kolekcí",
+  "sync-parent": "Srovnání nadřazené kolekce",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
@@ -352,6 +357,9 @@ export default function Index() {
           </s-button>
           <s-button onClick={() => submit("sort-all")} disabled={busy}>
             Seřadit kolekce
+          </s-button>
+          <s-button onClick={() => submit("sync-parents")} disabled={busy}>
+            Srovnat nadřazené kolekce
           </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit

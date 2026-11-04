@@ -11,6 +11,8 @@ import { getRules } from "../lib/settings.server";
 const SORT_ALL_DELAY_SECONDS = 30 * 60;
 /** Removal also needs the fresh list and runs before sorting. */
 const REMOVE_DELAY_SECONDS = 15 * 60;
+/** Parents are synced from their subcollections after removal is queued, before sorting. */
+const SYNC_PARENTS_DELAY_SECONDS = 25 * 60;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!hasValidJobsSecret(request)) return new Response("Unauthorized", { status: 401 });
@@ -25,6 +27,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if ((await getRules(shop)).removal.nightly) {
       await enqueueJob(shop, "remove-unmatched", { changedOnly: true }, { delaySeconds: REMOVE_DELAY_SECONDS });
     }
+    await enqueueJob(shop, "sync-parents", {}, { delaySeconds: SYNC_PARENTS_DELAY_SECONDS });
     await enqueueJob(shop, "sort-all", { changedOnly: true }, { delaySeconds: SORT_ALL_DELAY_SECONDS });
   }
   return Response.json({ shops: sessions.length });
