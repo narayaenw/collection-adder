@@ -10,16 +10,10 @@ import { evaluateProduct } from "../lib/evaluate.server";
 import { runJobNow } from "../lib/jobs.server";
 import { enqueueJob, resetQueue } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
-import { gql, type AdminClient } from "../lib/shopify/api.server";
+import { type AdminClient } from "../lib/shopify/api.server";
+import { adminUrl, jobTarget, loadTitles } from "../lib/job-targets.server";
+import { JOB_LABELS } from "../lib/job-labels";
 import { toGid } from "../lib/shopify/queries";
-
-const TITLES_QUERY = `#graphql
-  query JobTargets($ids: [ID!]!) {
-    nodes(ids: $ids) {
-      ... on Product { id title }
-      ... on Collection { id title }
-    }
-  }`;
 
 /** Pulls ids out of pasted text: numbers, GIDs or admin URLs, separated by anything. */
 function parseIds(text: string, type: "Product" | "Collection") {
@@ -41,32 +35,6 @@ const JOB_ROWS = 100;
 // Hidden from the job list (sort-collection: old rows from the removed sorting).
 const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
 const PENDING_JOBS = ["add-products", "clean-collection"];
-
-/** The product or collection a job works on, taken from its payload. */
-function jobTarget(payload: unknown): string | null {
-  const p = (payload ?? {}) as { productId?: unknown; collectionId?: unknown };
-  const id = p.productId ?? p.collectionId;
-  return typeof id === "string" ? id : null;
-}
-
-/** Admin link for a product or collection GID, e.g. shopify://admin/products/123. */
-function adminUrl(gid: string): string | null {
-  const match = /^gid:\/\/shopify\/(Product|Collection)\/(\d+)$/.exec(gid);
-  if (!match) return null;
-  return `shopify://admin/${match[1] === "Product" ? "products" : "collections"}/${match[2]}`;
-}
-
-async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string, string>> {
-  const titles = new Map<string, string>();
-  if (ids.length === 0) return titles;
-  try {
-    const data = await gql(admin, TITLES_QUERY, { ids });
-    for (const node of data.nodes ?? []) if (node?.id) titles.set(node.id, node.title);
-  } catch (error) {
-    console.error("Loading job target titles failed", error);
-  }
-  return titles;
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const steps: Record<string, number> = {};
@@ -241,20 +209,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-const JOB_LABELS: Record<string, string> = {
-  "sync-collections": "Synchronizace kolekcí",
-  "sync-collection": "Aktualizace kolekce",
-  "evaluate-product": "Vyhodnocení produktu",
-  "evaluate-collection": "Vyhodnocení kolekce",
-  "evaluate-collections": "Vyhodnocení seznamu kolekcí",
-  "evaluate-all": "Vyhodnocení všeho",
-  "evaluate-group": "Vyhodnocení skupiny kolekcí",
-  "export-plan": "Export plánu",
-  "export-rule-groups": "Report shodných pravidel",
-  "remove-unmatched": "Odebrání nevyhovujících",
-  "remove-smart-rules": "Smazání pravidel smart kolekcí",
-  "prune-history": "Úklid staré historie",
-};
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
 async function downloadExport(id: string, path = `/app/export/${id}`, name = `plan-${id}.csv`) {
