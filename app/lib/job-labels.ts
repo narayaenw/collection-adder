@@ -14,4 +14,5 @@ export const JOB_LABELS: Record<string, string> = {
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
   "remove-smart-rules": "Smazání pravidel smart kolekcí",
+  "prune-history": "Úklid staré historie",
 };

@@ -13,6 +13,7 @@ import { evaluateGroup, groupBySearch } from "./groups.server";
 import { enqueueJob, JobCancelledError, runInJob, type JobType } from "./queue.server";
 import { createMatcher, isVendorExcluded } from "./rules/engine";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
+import { pruneHistory, pruneSummary } from "./prune.server";
 import { cleanCollection, removalSummary } from "./removal.server";
 import { getRules } from "./settings.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
@@ -413,6 +414,13 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       runId: payload.runId,
       remove: payload.remove === true,
     });
+  },
+
+  /** Deletes old job rows and removal reports; queues itself again until everything is gone. */
+  async "prune-history"(shop) {
+    const result = await pruneHistory(shop);
+    if (!result.done) await enqueueJob(shop, "prune-history", { continued: Date.now() });
+    return pruneSummary(result);
   },
 
   async "add-products"(shop, payload) {

@@ -20,6 +20,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
   for (const { shop } of sessions) {
     await enqueueJob(shop, "sync-collections");
+    // Old job rows and removal reports otherwise fill the database disk.
+    await enqueueJob(shop, "prune-history");
     if ((await getRules(shop)).removal.nightly) {
       await enqueueJob(shop, "remove-unmatched", { changedOnly: true }, { delaySeconds: REMOVE_DELAY_SECONDS });
     }
