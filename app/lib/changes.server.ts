@@ -11,9 +11,9 @@ import { PRODUCT_BUILTIN_FIELDS, type CollectionSnapshot, type FieldMap, type Pr
 import { forEachBulkRow, type AdminClient } from "./shopify/api.server";
 import { productFieldsBulkQuery, readMetafields } from "./shopify/queries";
 
-/** Product fields kept between nightly passes: everything either pass reads. */
+/** Product fields kept between nightly passes: everything the removal pass reads. */
 function storedKeys(rules: RuleSet): string[] {
-  return [...new Set([...productKeysFor("clean", rules), ...productKeysFor("sort", rules), "status"])];
+  return [...new Set([...productKeysFor("clean", rules), "status"])];
 }
 
 /** All products with the fields the nightly passes read, from one bulk export. */

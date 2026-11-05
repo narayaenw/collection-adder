@@ -10,16 +10,10 @@ import { evaluateProduct } from "../lib/evaluate.server";
 import { runJobNow } from "../lib/jobs.server";
 import { enqueueJob, resetQueue } from "../lib/queue.server";
 import { getRules } from "../lib/settings.server";
-import { gql, type AdminClient } from "../lib/shopify/api.server";
+import { type AdminClient } from "../lib/shopify/api.server";
+import { adminUrl, jobTarget, loadTitles } from "../lib/job-targets.server";
+import { JOB_LABELS } from "../lib/job-labels";
 import { toGid } from "../lib/shopify/queries";
-
-const TITLES_QUERY = `#graphql
-  query JobTargets($ids: [ID!]!) {
-    nodes(ids: $ids) {
-      ... on Product { id title }
-      ... on Collection { id title }
-    }
-  }`;
 
 /** Pulls ids out of pasted text: numbers, GIDs or admin URLs, separated by anything. */
 function parseIds(text: string, type: "Product" | "Collection") {
@@ -38,33 +32,9 @@ const MAX_LIST_IDS = 5000;
 /** Jobs created in bulk, shown as a count instead of in the job list. */
 /** Rows in the job table on the overview. */
 const JOB_ROWS = 100;
+// Hidden from the job list (sort-collection: old rows from the removed sorting).
 const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
-
-/** The product or collection a job works on, taken from its payload. */
-function jobTarget(payload: unknown): string | null {
-  const p = (payload ?? {}) as { productId?: unknown; collectionId?: unknown };
-  const id = p.productId ?? p.collectionId;
-  return typeof id === "string" ? id : null;
-}
-
-/** Admin link for a product or collection GID, e.g. shopify://admin/products/123. */
-function adminUrl(gid: string): string | null {
-  const match = /^gid:\/\/shopify\/(Product|Collection)\/(\d+)$/.exec(gid);
-  if (!match) return null;
-  return `shopify://admin/${match[1] === "Product" ? "products" : "collections"}/${match[2]}`;
-}
-
-async function loadTitles(admin: AdminClient, ids: string[]): Promise<Map<string, string>> {
-  const titles = new Map<string, string>();
-  if (ids.length === 0) return titles;
-  try {
-    const data = await gql(admin, TITLES_QUERY, { ids });
-    for (const node of data.nodes ?? []) if (node?.id) titles.set(node.id, node.title);
-  } catch (error) {
-    console.error("Loading job target titles failed", error);
-  }
-  return titles;
-}
+const PENDING_JOBS = ["add-products", "clean-collection"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const steps: Record<string, number> = {};
@@ -105,8 +75,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     select: { id: true },
     orderBy: { createdAt: "asc" },
   }));
-  const [pendingAdds, pendingSorts, pendingCleans] = await timed("pending", Promise.all(
-    BATCH_JOBS.map((type) =>
+  const [pendingAdds, pendingCleans] = await timed("pending", Promise.all(
+    PENDING_JOBS.map((type) =>
       db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
     ),
   ));
@@ -122,7 +92,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     : [0, 0];
   console.log(`Overview loaded in ${Date.now() - started} ms ${JSON.stringify(steps)}`);
   return {
-    // Parents are only sorted; filling and removal skip them.
+    // Filling and removal skip parents.
     collectionCount: collectionCount - parentCount,
     parentCount,
     pendingCleans,
@@ -141,7 +111,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     lastSync: lastSync._max.syncedAt?.toISOString() ?? null,
     pendingAdds,
-    pendingSorts,
     filter: rules.collectionFilter,
     jobCounts: statusCounts,
     jobs: jobs.map((j, i) => ({
@@ -198,9 +167,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "remove-smart-rules":
       await enqueueJob(shop, "remove-smart-rules");
       return { message: "Mazání pravidel spuštěno, výsledek uvidíte v seznamu úloh." };
-    case "sort-all":
-      await enqueueJob(shop, "sort-all");
-      return { message: "Řazení všech kolekcí spuštěno." };
     case "evaluate-collection":
       // Started by hand: runs right away, whatever the queue or the JOBS_DISABLED switch says.
       return { message: await runJobNow(shop, "evaluate-collection", { collectionId: toGid("Collection", id) }) };
@@ -243,20 +209,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-const JOB_LABELS: Record<string, string> = {
-  "sync-collections": "Synchronizace kolekcí",
-  "sync-collection": "Aktualizace kolekce",
-  "evaluate-product": "Vyhodnocení produktu",
-  "evaluate-collection": "Vyhodnocení kolekce",
-  "evaluate-collections": "Vyhodnocení seznamu kolekcí",
-  "evaluate-all": "Vyhodnocení všeho",
-  "evaluate-group": "Vyhodnocení skupiny kolekcí",
-  "sort-all": "Řazení všech kolekcí",
-  "export-plan": "Export plánu",
-  "export-rule-groups": "Report shodných pravidel",
-  "remove-unmatched": "Odebrání nevyhovujících",
-  "remove-smart-rules": "Smazání pravidel smart kolekcí",
-};
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
 async function downloadExport(id: string, path = `/app/export/${id}`, name = `plan-${id}.csv`) {
@@ -326,14 +278,11 @@ export default function Index() {
         {data.parentCount > 0 && (
           <s-paragraph>
             Z přiřazování a odebírání vynecháno {data.parentCount} nadřazených kolekcí (mají podkolekce
-            v metapoli custom.subkolekce, produkty do nich propisuje Shopify); řadí se dál.
+            v metapoli custom.subkolekce, produkty do nich propisuje Shopify).
           </s-paragraph>
         )}
         {data.pendingAdds > 0 && (
           <s-paragraph>Čeká na zpracování {data.pendingAdds} dávek přiřazení.</s-paragraph>
-        )}
-        {data.pendingSorts > 0 && (
-          <s-paragraph>Čeká na seřazení {data.pendingSorts} kolekcí.</s-paragraph>
         )}
         <s-paragraph>
           {data.removal.enabled
@@ -349,9 +298,6 @@ export default function Index() {
           </s-button>
           <s-button onClick={() => pick("collection")} disabled={busy}>
             Vyhodnotit kolekci
-          </s-button>
-          <s-button onClick={() => submit("sort-all")} disabled={busy}>
-            Seřadit kolekce
           </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit

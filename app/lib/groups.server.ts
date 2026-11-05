@@ -70,7 +70,7 @@ export interface GroupResult {
   collections: number;
   added: number;
   removal: { checked: number; unmatched: number; skipped: string[] };
-  /** Collections whose products changed, for sorting. */
+  /** Collections whose products changed. */
   changed: Set<string>;
 }
 

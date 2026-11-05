@@ -68,11 +68,11 @@ export async function syncCollection(admin: AdminClient, shop: string, rules: Ru
     create: { id, shop, title: snapshot.title ?? "", fields: snapshot.fields as object },
     update: { title: snapshot.title ?? "", fields: snapshot.fields as object },
   });
-  // Parents stay in the local copy for sorting and the matching-rules report.
+  // Parents stay in the local copy for the matching-rules report.
   return { synced: true, parent: isParentCollection(snapshot) };
 }
 
-/** All rule collections in the local copy, parents included (sorting and the report). */
+/** All rule collections in the local copy, parents included (the report). */
 export async function loadAllRuleCollections(shop: string): Promise<CollectionSnapshot[]> {
   const rows = await db.ruleCollection.findMany({
     where: { shop },

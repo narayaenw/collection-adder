@@ -64,17 +64,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!(await isKnownRuleCollection(shop, collectionId, now))) return new Response();
   if (queuedRecently(`${shop}|${collectionId}`, now)) return new Response();
 
-  const waiting = await db.job.findFirst({
-    where: {
-      shop,
-      type: "sync-collection",
-      status: "queued",
-      payload: { path: ["collectionId"], equals: collectionId },
-    },
-    select: { id: true },
-  });
-  // Only refreshes the app's copy of the collection, so it runs even while the main queue is
-  // paused or JOBS_DISABLED is set (it goes with the hand-started jobs).
-  if (!waiting) await enqueueJob(shop, "sync-collection", { collectionId }, { manual: true });
+  // Only refreshes the app's copy of the collection, so it runs even while JOBS_DISABLED is set.
+  // Its own queue keeps it from waiting behind long evaluations; a refresh of the same
+  // collection that still waits is not queued twice (see enqueueJob).
+  await enqueueJob(shop, "sync-collection", { collectionId }, { manual: true, queue: "webhooks" });
   return new Response();
 };

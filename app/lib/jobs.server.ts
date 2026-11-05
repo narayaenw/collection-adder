@@ -15,7 +15,6 @@ import { createMatcher, isVendorExcluded } from "./rules/engine";
 import { ruleGroups, ruleValueKeys } from "./rules/ruleGroups";
 import { cleanCollection, removalSummary } from "./removal.server";
 import { getRules } from "./settings.server";
-import { queueSorting, sortCollection } from "./sort.server";
 import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
 import {
   COLLECTION_ADD_PRODUCTS,
@@ -79,7 +78,6 @@ async function planAdditions(admin: AdminClient, shop: string, collectionIds?: S
 
 /** Queues additions planned from a full product export. */
 async function queueAdditions(shop: string, additions: Map<string, string[]>) {
-  const rules = await getRules(shop);
   let products = 0;
   for (const [collectionId, productIds] of additions) {
     for (const ids of chunk(productIds, 250)) {
@@ -87,7 +85,6 @@ async function queueAdditions(shop: string, additions: Map<string, string[]>) {
       products += ids.length;
     }
   }
-  await queueSorting(shop, rules, additions.keys());
   return products;
 }
 
@@ -184,9 +181,6 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     if (group.collections === 0) return group.removal.skipped[0] ?? "Kolekce přeskočena.";
     let result = `Prověřeno ${group.searched} produktů, přidáno ${group.added}.`;
     if (removal) result += ` Odebírání: ${removalSummary(group.removal, true)}`;
-    // Checking one collection by hand also sorts it, even when nothing changed; queued last so
-    // the sort sees the collection after removal.
-    if (!fromList || group.changed.size > 0) await queueSorting(shop, rules, [payload.collectionId]);
     return result;
   },
 
@@ -220,7 +214,6 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const removed = { checked: 0, unmatched: 0, skipped: [] as string[] };
     for (const group of groups) {
       const result = await evaluateGroup(admin, shop, rules, group, { add: payload.add === true, removal });
-      await queueSorting(shop, rules, result.changed);
       searched += result.searched;
       evaluated += result.collections;
       added += result.added;
@@ -389,29 +382,6 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
       "Smazaná pravidla jsou v CSV.";
   },
 
-  async "sort-collection"(shop, payload) {
-    const admin = await adminFor(shop);
-    return sortCollection(admin, shop, await getRules(shop), payload.collectionId);
-  },
-
-  /**
-   * Sorts every rule collection, parents included; the nightly run (changedOnly) skips
-   * unchanged ones.
-   */
-  async "sort-all"(shop, payload) {
-    const rules = await getRules(shop);
-    if (!rules.sorting.enabled) return "Řazení je vypnuté.";
-    const collections = await loadAllRuleCollections(shop);
-    if (!payload.changedOnly) {
-      for (const { id } of collections) await enqueueJob(shop, "sort-collection", { collectionId: id });
-      return `Naplánováno seřazení ${collections.length} kolekcí.`;
-    }
-    const plan = await planChangedCollections(await adminFor(shop), shop, "sort", rules, collections);
-    for (const collectionId of plan.collectionIds) await enqueueJob(shop, "sort-collection", { collectionId });
-    await plan.save();
-    return `Naplánováno seřazení ${plan.collectionIds.length} kolekcí` + skippedSummary(plan, collections.length);
-  },
-
   /** Checks every rule collection for products the rules no longer put there, one job each. */
   async "remove-unmatched"(shop, payload, jobId) {
     const rules = await getRules(shop);
@@ -469,8 +439,9 @@ export async function runJob(jobId: string) {
   try {
     const handler = handlers[job.type as JobType];
     if (!handler) throw new Error(`Unknown job type ${job.type}`);
-    const manual = (job.payload as Payload | null)?.manual === true;
-    const message = await runInJob(jobId, () => handler(job.shop, job.payload as Payload, job.id), manual);
+    const payload = (job.payload as Payload | null) ?? {};
+    const manual = payload.manual === true;
+    const message = await runInJob(jobId, () => handler(job.shop, payload, job.id), manual, payload.queue);
     await finish("done", message);
   } catch (error) {
     if (error instanceof JobCancelledError) return;
@@ -484,7 +455,7 @@ export async function runJob(jobId: string) {
 /**
  * Runs a job right away inside the current request, bypassing the queue and the JOBS_DISABLED
  * switch: used for evaluations started by hand, which should always run. The job row is kept so
- * the result shows in the job list. Jobs it queues (e.g. sorting) are marked as started by hand.
+ * the result shows in the job list. Jobs it queues (e.g. additions) are marked as started by hand.
  */
 export async function runJobNow(shop: string, type: JobType, payload: Payload): Promise<string> {
   const job = await db.job.create({ data: { shop, type, payload: { ...payload, manual: true } } });
