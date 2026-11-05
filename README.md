@@ -17,13 +17,13 @@ Shopify aplikace, která přiřazuje produkty (alu kola) do kolekcí podle pravi
   | vendor | není AEZ, Dotz, Dezent | |
 
   Chybějící hodnota na kterékoli straně znamená „nesedí“.
-- **Lokální kopie kolekcí:** aplikace drží metapole všech YMM kolekcí v Postgresu (načtení přes Bulk Operation, aktualizace přes webhooky `collections/*` a noční synchronizaci). Nový produkt se tak porovná se ~17 000 kolekcemi v paměti bez dotazování Shopify.
+- **Lokální kopie kolekcí:** aplikace drží metapole všech YMM kolekcí v Postgresu (načtení přes Bulk Operation, aktualizace noční synchronizací a tlačítkem Vyhodnotit kolekci; webhook `collections/update` se ignoruje, protože ho Shopify posílá při každé změně produktu v kolekci, `collections/delete` kolekci odebere). Nový produkt se tak porovná se ~17 000 kolekcemi v paměti bez dotazování Shopify.
 - **Spouštění:**
   - automaticky webhookem `products/create` (s odstupem `PRODUCT_CREATE_DELAY_SECONDS`, výchozí 120 s, aby stihla doběhnout metapole),
   - z detailu produktu nebo kolekce v adminu přes *Další akce → Zařadit … podle pravidel*,
   - z přehledu aplikace: vyhodnotit produkt, kolekci, nebo vše.
 - **Fronty:** v produkci Cloud Tasks volá `/jobs/run`, neúspěšné úlohy se opakují. Tři fronty, aby se procesy neblokovaly:
-  - `collection-adder-webhooks` (`CLOUD_TASKS_WEBHOOK_QUEUE`): aktualizace kolekce a nový produkt z webhooků,
+  - `collection-adder-webhooks` (`CLOUD_TASKS_WEBHOOK_QUEUE`): nový produkt z webhooku `products/create`,
   - `collection-adder-manual` (`CLOUD_TASKS_MANUAL_QUEUE`): vyhodnocení spuštěná ručně (seznamy) a jejich navazující úlohy,
   - `collection-adder` (`CLOUD_TASKS_QUEUE`): noční běh a hromadná tlačítka (synchronizace, Vyhodnotit vše, Odebrat nevyhovující, exporty).
   Navazující úlohy jdou do fronty své nadřazené úlohy. Stejná úloha (typ + obsah), která ještě čeká ve frontě, se nezařadí podruhé. Limit Shopify API je společný, rychlost front je proto nastavená s rezervou. Lokálně běží úlohy postupně v procesu.
