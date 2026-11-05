@@ -91,7 +91,8 @@ export async function cleanOne(
       assertNoUserErrors("collectionRemoveProducts", data.collectionRemoveProducts.userErrors);
     }
   }
-  if (unmatched.length > 0) {
+  // Only real removals are logged; a dry run reports its counts in the job message.
+  if (remove && unmatched.length > 0) {
     await db.removalItem.createMany({
       data: unmatched.map((p) => ({
         shop,
@@ -101,7 +102,7 @@ export async function cleanOne(
         productId: p.id,
         productTitle: titles.get(p.id) ?? "",
         vendor: p.fields.vendor ?? "",
-        removed: remove,
+        removed: true,
       })),
     });
   }
