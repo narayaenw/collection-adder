@@ -16,7 +16,8 @@ export type JobType =
   | "export-rule-groups"
   | "remove-unmatched"
   | "clean-collection"
-  | "remove-smart-rules";
+  | "remove-smart-rules"
+  | "prune-history";
 
 let tasksClient: CloudTasksClient | undefined;
 

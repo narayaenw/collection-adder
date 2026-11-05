@@ -253,6 +253,7 @@ const JOB_LABELS: Record<string, string> = {
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
   "remove-smart-rules": "Smazání pravidel smart kolekcí",
+  "prune-history": "Úklid staré historie",
 };
 
 /** Fetches an export (App Bridge adds the session token) and saves it as a file. */
