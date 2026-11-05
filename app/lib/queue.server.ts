@@ -74,6 +74,13 @@ function queuePathName(queue: QueueName, mainQueue: string): string {
   return mainQueue;
 }
 
+/** Queue of a stored job; jobs from before the queues were split go by their manual flag. */
+export function queueOfPayload(payload: unknown): QueueName {
+  const p = (payload ?? {}) as { queue?: unknown; manual?: unknown };
+  if (p.queue === "main" || p.queue === "manual" || p.queue === "webhooks") return p.queue;
+  return p.manual === true ? "manual" : "main";
+}
+
 /** Every distinct Cloud Tasks queue the app uses. */
 function allQueueNames(mainQueue: string): string[] {
   return [...new Set((["main", "manual", "webhooks"] as const).map((q) => queuePathName(q, mainQueue)))];
@@ -137,7 +144,8 @@ export async function enqueueJob(
     where: { shop, dedupKey, status: "queued", createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) } },
   });
   if (waiting) return waiting;
-  const job = await db.job.create({ data: { shop, type, payload: data as object, dedupKey } });
+  const runAt = new Date(Date.now() + delaySeconds * 1000);
+  const job = await db.job.create({ data: { shop, type, payload: data as object, dedupKey, runAt } });
   const config = cloudTasksConfig();
 
   if (!config) {
