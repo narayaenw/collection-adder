@@ -38,7 +38,9 @@ const MAX_LIST_IDS = 5000;
 /** Jobs created in bulk, shown as a count instead of in the job list. */
 /** Rows in the job table on the overview. */
 const JOB_ROWS = 100;
+// Hidden from the job list (sort-collection: old rows from the removed sorting).
 const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
+const PENDING_JOBS = ["add-products", "clean-collection"];
 
 /** The product or collection a job works on, taken from its payload. */
 function jobTarget(payload: unknown): string | null {
@@ -105,8 +107,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     select: { id: true },
     orderBy: { createdAt: "asc" },
   }));
-  const [pendingAdds, pendingSorts, pendingCleans] = await timed("pending", Promise.all(
-    BATCH_JOBS.map((type) =>
+  const [pendingAdds, pendingCleans] = await timed("pending", Promise.all(
+    PENDING_JOBS.map((type) =>
       db.job.count({ where: { shop, type, status: { in: ["queued", "running"] } } }),
     ),
   ));
@@ -122,7 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     : [0, 0];
   console.log(`Overview loaded in ${Date.now() - started} ms ${JSON.stringify(steps)}`);
   return {
-    // Parents are only sorted; filling and removal skip them.
+    // Filling and removal skip parents.
     collectionCount: collectionCount - parentCount,
     parentCount,
     pendingCleans,
@@ -141,7 +143,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     lastSync: lastSync._max.syncedAt?.toISOString() ?? null,
     pendingAdds,
-    pendingSorts,
     filter: rules.collectionFilter,
     jobCounts: statusCounts,
     jobs: jobs.map((j, i) => ({
@@ -198,9 +199,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "remove-smart-rules":
       await enqueueJob(shop, "remove-smart-rules");
       return { message: "Mazání pravidel spuštěno, výsledek uvidíte v seznamu úloh." };
-    case "sort-all":
-      await enqueueJob(shop, "sort-all");
-      return { message: "Řazení všech kolekcí spuštěno." };
     case "evaluate-collection":
       // Started by hand: runs right away, whatever the queue or the JOBS_DISABLED switch says.
       return { message: await runJobNow(shop, "evaluate-collection", { collectionId: toGid("Collection", id) }) };
@@ -251,7 +249,6 @@ const JOB_LABELS: Record<string, string> = {
   "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
   "evaluate-group": "Vyhodnocení skupiny kolekcí",
-  "sort-all": "Řazení všech kolekcí",
   "export-plan": "Export plánu",
   "export-rule-groups": "Report shodných pravidel",
   "remove-unmatched": "Odebrání nevyhovujících",
@@ -326,14 +323,11 @@ export default function Index() {
         {data.parentCount > 0 && (
           <s-paragraph>
             Z přiřazování a odebírání vynecháno {data.parentCount} nadřazených kolekcí (mají podkolekce
-            v metapoli custom.subkolekce, produkty do nich propisuje Shopify); řadí se dál.
+            v metapoli custom.subkolekce, produkty do nich propisuje Shopify).
           </s-paragraph>
         )}
         {data.pendingAdds > 0 && (
           <s-paragraph>Čeká na zpracování {data.pendingAdds} dávek přiřazení.</s-paragraph>
-        )}
-        {data.pendingSorts > 0 && (
-          <s-paragraph>Čeká na seřazení {data.pendingSorts} kolekcí.</s-paragraph>
         )}
         <s-paragraph>
           {data.removal.enabled
@@ -349,9 +343,6 @@ export default function Index() {
           </s-button>
           <s-button onClick={() => pick("collection")} disabled={busy}>
             Vyhodnotit kolekci
-          </s-button>
-          <s-button onClick={() => submit("sort-all")} disabled={busy}>
-            Seřadit kolekce
           </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit

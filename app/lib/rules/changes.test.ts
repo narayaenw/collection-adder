@@ -57,18 +57,6 @@ describe("collectionsAffectedByProducts", () => {
     expect(result.changedProducts).toBe(1);
     expect([...result.collectionIds].sort()).toEqual(["a", "p"]);
   });
-
-  it("sorting revisits collections matched before or now when a sort field changes", () => {
-    const previous = new Map([["x", wheel()]]);
-    const rankOnly = collectionsAffectedByProducts("sort", DEFAULT_RULE_SET, collections, previous, [
-      { id: "x", fields: wheel({ "custom.rank": "9" }) },
-    ]);
-    expect([...rankOnly.collectionIds].sort()).toEqual(["a", "p"]);
-    const ruleOnly = collectionsAffectedByProducts("sort", DEFAULT_RULE_SET, collections, previous, [
-      { id: "x", fields: wheel({ "custom.cb": "57.1" }) },
-    ]);
-    expect(ruleOnly.changedProducts).toBe(0);
-  });
 });
 
 describe("checkHash", () => {
@@ -76,9 +64,8 @@ describe("checkHash", () => {
     const base = checkHash("clean", DEFAULT_RULE_SET, a.fields);
     expect(checkHash("clean", DEFAULT_RULE_SET, { ...a.fields })).toBe(base);
     expect(checkHash("clean", DEFAULT_RULE_SET, { ...a.fields, "custom.ymm_cb": "60" })).not.toBe(base);
-    const otherSorting = { ...DEFAULT_RULE_SET, sorting: { ...DEFAULT_RULE_SET.sorting, tag: "X" } };
-    expect(checkHash("clean", otherSorting, a.fields)).toBe(base);
-    expect(checkHash("sort", otherSorting, a.fields)).not.toBe(checkHash("sort", DEFAULT_RULE_SET, a.fields));
+    const savedWithSorting = { ...DEFAULT_RULE_SET, sorting: { enabled: true } } as typeof DEFAULT_RULE_SET;
+    expect(checkHash("clean", savedWithSorting, a.fields)).toBe(base);
   });
 });
 

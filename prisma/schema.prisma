@@ -54,11 +54,14 @@ model Job {
   status    String   @default("queued")
   message   String?
   attempts  Int      @default(0)
+  /// Same key as a job still queued: the new one is skipped (e.g. the same product twice).
+  dedupKey  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([shop, createdAt])
   @@index([shop, type, status])
+  @@index([shop, dedupKey, status])
 }
 
 /** CSV produced by the export-plan job, downloaded from the app. */

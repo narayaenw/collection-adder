@@ -10,7 +10,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, payload } = await authenticate.webhook(request);
   const productId = (payload as { admin_graphql_api_id?: string }).admin_graphql_api_id;
   if (productId) {
-    await enqueueJob(shop, "evaluate-product", { productId }, { delaySeconds: DELAY_SECONDS });
+    await enqueueJob(shop, "evaluate-product", { productId }, { delaySeconds: DELAY_SECONDS, queue: "webhooks" });
   }
   return new Response();
 };

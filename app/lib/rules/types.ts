@@ -43,7 +43,6 @@ export interface RuleSet {
   excludedVendors: string[];
   carMatch: CarMatchSettings;
   removal: RemovalSettings;
-  sorting: SortSettings;
 }
 
 /**
@@ -65,32 +64,6 @@ export interface RemovalSettings {
   enabled: boolean;
   /** Run after the nightly collection sync. */
   nightly: boolean;
-}
-
-/**
- * Order of products inside rule collections: products with the collection's original size first
- * (those also made for its car ahead), then products made for the car, then tagged products,
- * then the rest; each group by rank from highest. Products without a
- * rank end their group, ties keep their current order.
- */
-export interface SortSettings {
-  enabled: boolean;
-  /** Product number metafield ("namespace.key") with the rank. */
-  rankKey: string;
-  /** Product metafield with the wheel size, compared with `collectionSizeKey`. */
-  productSizeKey: string;
-  /** Product metafield with the rim width, compared with the OE sizes' width ("8J"). */
-  productWidthKey: string;
-  /** Product (list) metafield with the ET values, compared with the OE sizes' ET. */
-  productEtKey: string;
-  /** Collection metafield with the car's original wheel size. */
-  collectionSizeKey: string;
-  /** Product list metafield with the cars the wheel is designed for. */
-  productMatchKey: string;
-  /** Collection metafield with the collection's car, compared with `productMatchKey`. */
-  collectionMatchKey: string;
-  /** Products with this tag follow the car group. Empty string turns the group off. */
-  tag: string;
 }
 
 /** Raw values keyed by field name, exactly as Shopify returns them (lists are JSON strings). */
@@ -158,18 +131,7 @@ export const DEFAULT_RULE_SET: RuleSet = {
     anyCarValues: ["Racing Line", "Aftermarket"],
   },
   removal: { enabled: false, nightly: true },
-  sorting: {
-    enabled: true,
-    rankKey: "custom.rank",
-    productSizeKey: "custom.size",
-    productWidthKey: "custom.width",
-    productEtKey: "custom.ett2",
-    collectionSizeKey: "custom.oe_size",
-    productMatchKey: "custom.auto",
-    collectionMatchKey: "ymm.znacka",
-    tag: "_TIP",
-  },
 };
 
-/** Parent collection metafield listing its subcollections; parents are only sorted, never filled or cleaned. */
+/** Parent collection metafield listing its subcollections; the app never fills or cleans them. */
 export const SUBCOLLECTION_KEY = "custom.subkolekce";
