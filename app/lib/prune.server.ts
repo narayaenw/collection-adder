@@ -1,7 +1,9 @@
 import db from "../db.server";
 
-/** How long finished jobs and removal reports are kept. */
+/** How long finished jobs are kept. */
 export const KEEP_DAYS = 14;
+/** How long the removal log is kept. */
+export const REMOVAL_KEEP_HOURS = 48;
 /** Rows deleted per statement, so one delete never holds locks or builds WAL for long. */
 const BATCH = 20_000;
 /** Stops in time for the request limit; the rest is deleted the next time. */
@@ -10,17 +12,19 @@ const TIME_BUDGET_MS = 20 * 60 * 1000;
 export type PruneResult = { removalItems: number; jobs: number; done: boolean };
 
 /**
- * Deletes removal report rows and finished jobs older than KEEP_DAYS, in small batches.
+ * Deletes removal log rows older than REMOVAL_KEEP_HOURS and finished jobs older than KEEP_DAYS,
+ * in small batches.
  * Queued and running jobs are never touched. Returns done=false when the time ran out.
  */
 export async function pruneHistory(shop: string, now = Date.now()): Promise<PruneResult> {
   const cutoff = new Date(now - KEEP_DAYS * 24 * 60 * 60 * 1000);
+  const removalCutoff = new Date(now - REMOVAL_KEEP_HOURS * 60 * 60 * 1000);
   const deadline = now + TIME_BUDGET_MS;
   const result: PruneResult = { removalItems: 0, jobs: 0, done: false };
 
   // Removal rows go by run (indexed), before the run's job row, so none are left without a run.
   const oldRuns = await db.job.findMany({
-    where: { shop, type: "remove-unmatched", createdAt: { lt: cutoff } },
+    where: { shop, type: "remove-unmatched", createdAt: { lt: removalCutoff } },
     select: { id: true },
   });
   for (const { id: runId } of oldRuns) {
@@ -48,6 +52,7 @@ export async function pruneHistory(shop: string, now = Date.now()): Promise<Prun
 }
 
 export function pruneSummary({ removalItems, jobs, done }: PruneResult) {
-  return `Smazáno ${removalItems} záznamů o odebírání a ${jobs} úloh starších ${KEEP_DAYS} dní` +
+  return `Smazáno ${removalItems} záznamů o odebírání starších ${REMOVAL_KEEP_HOURS} h ` +
+    `a ${jobs} úloh starších ${KEEP_DAYS} dní` +
     (done ? "." : ", zbytek se smaže v dalším běhu.");
 }
