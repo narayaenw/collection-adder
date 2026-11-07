@@ -50,7 +50,7 @@ export async function readCollectionContents(
     if (!data.collection) return "Kolekce nenalezena.";
     if (data.collection.ruleSet) return "Smart kolekce, přeskočeno.";
     for (const node of data.collection.products.nodes) {
-      // Pages can repeat products when the collection is reordered meanwhile (e.g. by a sort job).
+      // Pages can repeat products when the collection is reordered meanwhile.
       if (titles.has(node.id)) continue;
       products.push(toProductSnapshot(node, rules));
       titles.set(node.id, node.title ?? "");
@@ -91,7 +91,8 @@ export async function cleanOne(
       assertNoUserErrors("collectionRemoveProducts", data.collectionRemoveProducts.userErrors);
     }
   }
-  if (unmatched.length > 0) {
+  // Only real removals are logged; a dry run reports its counts in the job message.
+  if (remove && unmatched.length > 0) {
     await db.removalItem.createMany({
       data: unmatched.map((p) => ({
         shop,
@@ -101,7 +102,7 @@ export async function cleanOne(
         productId: p.id,
         productTitle: titles.get(p.id) ?? "",
         vendor: p.fields.vendor ?? "",
-        removed: remove,
+        removed: true,
       })),
     });
   }

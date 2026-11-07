@@ -48,17 +48,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       enabled: form.get("removalEnabled") === "on",
       nightly: form.get("removalNightly") === "on",
     },
-    sorting: {
-      enabled: form.get("sortEnabled") === "on",
-      rankKey: form.get("sortRankKey"),
-      productSizeKey: form.get("sortProductSizeKey"),
-      productWidthKey: form.get("sortProductWidthKey"),
-      productEtKey: form.get("sortProductEtKey"),
-      collectionSizeKey: form.get("sortCollectionSizeKey"),
-      productMatchKey: form.get("sortProductMatchKey"),
-      collectionMatchKey: form.get("sortCollectionMatchKey"),
-      tag: form.get("sortTag"),
-    },
   };
 
   const { rules, errors } = parseRuleSet(input);
@@ -283,71 +272,6 @@ export default function Settings() {
           </s-stack>
         </s-section>
 
-        <s-section heading="Řazení produktů v kolekcích">
-          <s-paragraph>
-            Nahoře produkty s původním rozměrem auta (nejdřív ty, které jsou i pro jeho auto), pak
-            produkty, jejichž seznam aut obsahuje auto kolekce, pak produkty s tagem, pak ostatní. Uvnitř skupiny podle ranku od nejvyššího, produkty bez ranku na konci
-            skupiny. Řadí se po přidání produktů a každou noc.
-          </s-paragraph>
-          <s-stack direction="block" gap="base">
-            <s-checkbox
-              name="sortEnabled"
-              value="on"
-              label="Řadit produkty v kolekcích"
-              defaultChecked={shown.sorting.enabled}
-            />
-            <s-grid gridTemplateColumns="1fr 1fr" gap="base">
-              <s-text-field
-                name="sortRankKey"
-                label="Rank produktu"
-                value={shown.sorting.rankKey}
-                placeholder="custom.rank"
-              />
-              <s-text-field
-                name="sortProductSizeKey"
-                label="Průměr produktu"
-                value={shown.sorting.productSizeKey}
-                placeholder="custom.size"
-              />
-              <s-text-field
-                name="sortProductWidthKey"
-                label="Šířka produktu"
-                value={shown.sorting.productWidthKey}
-                placeholder="custom.width"
-              />
-              <s-text-field
-                name="sortProductEtKey"
-                label="ET produktu (seznam)"
-                value={shown.sorting.productEtKey}
-                placeholder="custom.ett2"
-              />
-              <s-text-field
-                name="sortCollectionSizeKey"
-                label="OE rozměry kolekce (seznam)"
-                value={shown.sorting.collectionSizeKey}
-                placeholder="custom.oe_size"
-              />
-              <s-text-field
-                name="sortProductMatchKey"
-                label="Auta na produktu"
-                value={shown.sorting.productMatchKey}
-                placeholder="custom.auto"
-              />
-              <s-text-field
-                name="sortCollectionMatchKey"
-                label="Auto kolekce"
-                value={shown.sorting.collectionMatchKey}
-                placeholder="ymm.znacka"
-              />
-              <s-text-field
-                name="sortTag"
-                label="Tag druhé skupiny"
-                value={shown.sorting.tag}
-                placeholder="_TIP"
-              />
-            </s-grid>
-          </s-stack>
-        </s-section>
 
         <s-section>
           <s-button type="submit" variant="primary" {...(saving ? { loading: true } : {})}>

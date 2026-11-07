@@ -17,12 +17,16 @@ Shopify aplikace, která přiřazuje produkty (alu kola) do kolekcí podle pravi
   | vendor | není AEZ, Dotz, Dezent | |
 
   Chybějící hodnota na kterékoli straně znamená „nesedí“.
-- **Lokální kopie kolekcí:** aplikace drží metapole všech YMM kolekcí v Postgresu (načtení přes Bulk Operation, aktualizace přes webhooky `collections/*` a noční synchronizaci). Nový produkt se tak porovná se ~17 000 kolekcemi v paměti bez dotazování Shopify.
+- **Lokální kopie kolekcí:** aplikace drží metapole všech YMM kolekcí v Postgresu (načtení přes Bulk Operation, aktualizace noční synchronizací a tlačítkem Vyhodnotit kolekci; webhook `collections/update` se ignoruje, protože ho Shopify posílá při každé změně produktu v kolekci, `collections/delete` kolekci odebere). Nový produkt se tak porovná se ~17 000 kolekcemi v paměti bez dotazování Shopify.
 - **Spouštění:**
   - automaticky webhookem `products/create` (s odstupem `PRODUCT_CREATE_DELAY_SECONDS`, výchozí 120 s, aby stihla doběhnout metapole),
   - z detailu produktu nebo kolekce v adminu přes *Další akce → Zařadit … podle pravidel*,
   - z přehledu aplikace: vyhodnotit produkt, kolekci, nebo vše.
-- **Fronta:** v produkci Cloud Tasks volá `/jobs/run`. Rychlost fronty drží aplikaci pod limity Shopify API, neúspěšné úlohy se opakují. Lokálně běží úlohy postupně v procesu.
+- **Fronty:** v produkci Cloud Tasks volá `/jobs/run`, neúspěšné úlohy se opakují. Tři fronty, aby se procesy neblokovaly:
+  - `collection-adder-webhooks` (`CLOUD_TASKS_WEBHOOK_QUEUE`): nový produkt z webhooku `products/create`,
+  - `collection-adder-manual` (`CLOUD_TASKS_MANUAL_QUEUE`): vyhodnocení spuštěná ručně (seznamy) a jejich navazující úlohy,
+  - `collection-adder` (`CLOUD_TASKS_QUEUE`): noční běh a hromadná tlačítka (synchronizace, Vyhodnotit vše, Odebrat nevyhovující, exporty).
+  Navazující úlohy jdou do fronty své nadřazené úlohy. Stejná úloha (typ + obsah), která ještě čeká ve frontě, se nezařadí podruhé. Limit Shopify API je společný, rychlost front je proto nastavená s rezervou. Lokálně běží úlohy postupně v procesu.
 
 Produkty se zatím jen přidávají. Odebírání a reakce na úpravu produktu jsou ve fázi 2.
 
@@ -57,6 +61,10 @@ gcloud sql users create app --instance=collection-adder-db --password='SILNE_HES
 gcloud tasks queues create collection-adder --location=$REGION \
   --max-dispatches-per-second=2 --max-concurrent-dispatches=4 \
   --max-attempts=5 --min-backoff=30s
+gcloud tasks queues create collection-adder-manual --location=$REGION \
+  --max-dispatches-per-second=2 --max-concurrent-dispatches=3 --max-attempts=100 --min-backoff=0.1s
+gcloud tasks queues create collection-adder-webhooks --location=$REGION \
+  --max-dispatches-per-second=5 --max-concurrent-dispatches=4 --max-attempts=20 --min-backoff=10s
 
 # 3. Aplikace. Adresa služby je známá předem a aplikace bez ní nenastartuje.
 JOBS_SECRET=$(openssl rand -hex 32)
@@ -67,7 +75,7 @@ for ROLE in roles/cloudsql.client roles/cloudtasks.enqueuer roles/iam.serviceAcc
 done
 gcloud run deploy collection-adder --source . --region=$REGION --allow-unauthenticated \
   --add-cloudsql-instances=$PROJECT:$REGION:collection-adder-db --timeout=1800 --memory=2Gi \
-  --set-env-vars="^|^SHOPIFY_API_KEY=...|SHOPIFY_API_SECRET=...|SCOPES=read_products,write_products|SHOPIFY_APP_URL=$URL|DATABASE_URL=postgresql://app:SILNE_HESLO@localhost/app?host=/cloudsql/$PROJECT:$REGION:collection-adder-db|GCP_PROJECT=$PROJECT|GCP_LOCATION=$REGION|CLOUD_TASKS_QUEUE=collection-adder|JOBS_SECRET=$JOBS_SECRET"
+  --set-env-vars="^|^SHOPIFY_API_KEY=...|SHOPIFY_API_SECRET=...|SCOPES=read_products,write_products|SHOPIFY_APP_URL=$URL|DATABASE_URL=postgresql://app:SILNE_HESLO@localhost/app?host=/cloudsql/$PROJECT:$REGION:collection-adder-db|GCP_PROJECT=$PROJECT|GCP_LOCATION=$REGION|CLOUD_TASKS_QUEUE=collection-adder|CLOUD_TASKS_MANUAL_QUEUE=collection-adder-manual|CLOUD_TASKS_WEBHOOK_QUEUE=collection-adder-webhooks|JOBS_SECRET=$JOBS_SECRET"
 
 # 4. Noční synchronizace kolekcí
 gcloud scheduler jobs create http collection-adder-sync --location=$REGION \

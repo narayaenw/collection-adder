@@ -1,47 +1,11 @@
 import type { ActionFunctionArgs } from "react-router";
 import db from "../db.server";
-import { enqueueJob } from "../lib/queue.server";
 import { hasValidWebhookHmac } from "../lib/webhook-hmac.server";
 
-// Adding products to a collection fires collections/update too, so bulk runs send thousands
-// of these. Each instance remembers recently queued refreshes and skips repeats without a
-// database query; one refresh reads the latest state anyway.
-const RECENT_MS = 5 * 60 * 1000;
-const recentlyQueued = new Map<string, number>();
-
-function queuedRecently(key: string, now: number) {
-  const at = recentlyQueued.get(key);
-  if (at !== undefined && now - at < RECENT_MS) return true;
-  if (recentlyQueued.size > 50_000) {
-    for (const [k, t] of recentlyQueued) if (now - t >= RECENT_MS) recentlyQueued.delete(k);
-  }
-  recentlyQueued.set(key, now);
-  return false;
-}
-
-// New YMM collections are rare and the nightly full sync picks them up, so webhooks only
-// refresh collections already known to have rules. The list is cached per instance.
-const KNOWN_TTL_MS = 10 * 60 * 1000;
-// Concurrent webhooks share one load, so a burst does not exhaust the DB connection pool.
-const knownCollections = new Map<string, { ids: Promise<Set<string>>; loadedAt: number }>();
-
-async function isKnownRuleCollection(shop: string, collectionId: string, now: number) {
-  let known = knownCollections.get(shop);
-  if (!known || now - known.loadedAt >= KNOWN_TTL_MS) {
-    const ids = db.ruleCollection
-      .findMany({ where: { shop }, select: { id: true } })
-      .then((rows) => new Set(rows.map((r) => r.id)));
-    known = { ids, loadedAt: now };
-    knownCollections.set(shop, known);
-    // A failed load is not cached, so the next webhook retries it.
-    ids.catch(() => {
-      if (knownCollections.get(shop) === known) knownCollections.delete(shop);
-    });
-  }
-  return (await known.ids).has(collectionId);
-}
-
-// Keeps the local copy of rule collections current.
+// Shopify sends collections/update for every collection a product sits in whenever the
+// product changes (stock edits from bulk importers send tens of thousands a day), and when
+// the app itself adds or removes products. The local copy is refreshed by the nightly full
+// sync and by "Vyhodnotit kolekci", so update webhooks are acknowledged and ignored.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const rawBody = await request.text();
   if (!hasValidWebhookHmac(rawBody, request.headers.get("x-shopify-hmac-sha256"))) {
@@ -51,30 +15,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const topic = request.headers.get("x-shopify-topic");
   if (!shop || !topic) return new Response("Bad request", { status: 400 });
 
-  const payload = JSON.parse(rawBody) as { admin_graphql_api_id?: string; id?: number };
-  const collectionId = payload.admin_graphql_api_id ?? `gid://shopify/Collection/${payload.id}`;
-
   if (topic === "collections/delete") {
-    recentlyQueued.delete(`${shop}|${collectionId}`);
+    const payload = JSON.parse(rawBody) as { admin_graphql_api_id?: string; id?: number };
+    const collectionId = payload.admin_graphql_api_id ?? `gid://shopify/Collection/${payload.id}`;
     await db.ruleCollection.deleteMany({ where: { id: collectionId, shop } });
-    return new Response();
   }
-
-  const now = Date.now();
-  if (!(await isKnownRuleCollection(shop, collectionId, now))) return new Response();
-  if (queuedRecently(`${shop}|${collectionId}`, now)) return new Response();
-
-  const waiting = await db.job.findFirst({
-    where: {
-      shop,
-      type: "sync-collection",
-      status: "queued",
-      payload: { path: ["collectionId"], equals: collectionId },
-    },
-    select: { id: true },
-  });
-  // Only refreshes the app's copy of the collection, so it runs even while the main queue is
-  // paused or JOBS_DISABLED is set (it goes with the hand-started jobs).
-  if (!waiting) await enqueueJob(shop, "sync-collection", { collectionId }, { manual: true });
   return new Response();
 };

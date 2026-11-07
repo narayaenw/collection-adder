@@ -10,7 +10,6 @@ import {
   type ProductSnapshot,
   type RemovalSettings,
   type RuleSet,
-  type SortSettings,
 } from "./types";
 
 /** Splits a raw Shopify value into its items. List metafields arrive as JSON arrays. */
@@ -214,7 +213,7 @@ export function isRuleCollection(collection: CollectionSnapshot, rules: RuleSet)
 
 /**
  * A parent collection lists its subcollections in the subcollection metafield. Shopify passes
- * the subcollections' products up to it, so the app never fills or cleans it (only sorts it).
+ * the subcollections' products up to it, so the app never fills or cleans it.
  */
 export function isParentCollection(collection: CollectionSnapshot): boolean {
   return toList(collection.fields[SUBCOLLECTION_KEY]).length > 0;
@@ -313,7 +312,7 @@ export function productMetafieldKeys(rules: RuleSet): string[] {
 }
 
 /**
- * Collection metafield keys the rules, the matching-rules report and the sort settings read,
+ * Collection metafield keys the rules, and the matching-rules report read,
  * including the filter key.
  */
 export function collectionMetafieldKeys(rules: RuleSet): string[] {
@@ -322,11 +321,6 @@ export function collectionMetafieldKeys(rules: RuleSet): string[] {
     if (c.source.type === "collection") keys.add(c.source.key);
   }
   if (rules.carMatch.vendors.length > 0) keys.add(rules.carMatch.collectionKey);
-  // Kept locally so the nightly sort can tell which collections changed.
-  if (rules.sorting.enabled) {
-    keys.add(rules.sorting.collectionSizeKey);
-    keys.add(rules.sorting.collectionMatchKey);
-  }
   keys.add(SUBCOLLECTION_KEY);
   return [...keys];
 }
@@ -436,7 +430,6 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
   });
   if (conditions.length === 0) errors.push("Musí existovat alespoň jedna podmínka.");
 
-  const sorting = parseSortSettings(obj.sorting, errors);
   const carMatch = parseCarMatch(obj.carMatch, errors);
   const removal = parseRemoval(obj.removal);
 
@@ -453,33 +446,8 @@ export function parseRuleSet(input: unknown): { rules?: RuleSet; errors: string[
       excludedVendors,
       carMatch,
       removal,
-      sorting,
     },
     errors,
-  };
-}
-
-function parseSortSettings(input: unknown, errors: string[]): SortSettings {
-  // Rules saved before sorting existed get the defaults.
-  if (input === undefined || input === null) return { ...DEFAULT_RULE_SET.sorting };
-  const obj: Record<string, unknown> = { ...DEFAULT_RULE_SET.sorting, ...(input as object) };
-  // The collection's original size moved to the OE size list (Adam, 2026-10-13).
-  if (obj.collectionSizeKey === "custom.original_size") obj.collectionSizeKey = DEFAULT_RULE_SET.sorting.collectionSizeKey;
-  const key = (name: Exclude<keyof SortSettings, "enabled" | "tag">, label: string) => {
-    const value = String(obj[name] ?? "").trim();
-    if (!METAFIELD_KEY.test(value)) errors.push(`Neplatné metapole pro řazení (${label}): "${value}"`);
-    return value;
-  };
-  return {
-    enabled: obj.enabled === true || obj.enabled === "true" || obj.enabled === "on",
-    rankKey: key("rankKey", "rank"),
-    productSizeKey: key("productSizeKey", "rozměr na produktu"),
-    productWidthKey: key("productWidthKey", "šířka na produktu"),
-    productEtKey: key("productEtKey", "ET na produktu"),
-    collectionSizeKey: key("collectionSizeKey", "rozměr na kolekci"),
-    productMatchKey: key("productMatchKey", "auto na produktu"),
-    collectionMatchKey: key("collectionMatchKey", "auto na kolekci"),
-    tag: String(obj.tag ?? "").trim(),
   };
 }
 

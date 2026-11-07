@@ -19,6 +19,7 @@ export default function App() {
     <AppProvider apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Přehled</s-link>
+        <s-link href="/app/queues">Fronty</s-link>
         <s-link href="/app/settings">Nastavení pravidel</s-link>
       </s-app-nav>
       <Outlet />
