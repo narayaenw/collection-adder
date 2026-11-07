@@ -33,7 +33,7 @@ const MAX_LIST_IDS = 5000;
 /** Rows in the job table on the overview. */
 const JOB_ROWS = 100;
 // Hidden from the job list (sort-collection: old rows from the removed sorting).
-const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group"];
+const BATCH_JOBS = ["add-products", "sort-collection", "clean-collection", "evaluate-group", "sync-parent"];
 const PENDING_JOBS = ["add-products", "clean-collection"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -167,6 +167,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "remove-smart-rules":
       await enqueueJob(shop, "remove-smart-rules");
       return { message: "Mazání pravidel spuštěno, výsledek uvidíte v seznamu úloh." };
+    case "sync-parents":
+      await enqueueJob(shop, "sync-parents", {}, { manual: true });
+      return { message: "Srovnání nadřazených kolekcí s podkolekcemi spuštěno." };
     case "evaluate-collection":
       // Started by hand: runs right away, whatever the queue or the JOBS_DISABLED switch says.
       return { message: await runJobNow(shop, "evaluate-collection", { collectionId: toGid("Collection", id) }) };
@@ -298,6 +301,9 @@ export default function Index() {
           </s-button>
           <s-button onClick={() => pick("collection")} disabled={busy}>
             Vyhodnotit kolekci
+          </s-button>
+          <s-button onClick={() => submit("sync-parents")} disabled={busy}>
+            Srovnat nadřazené kolekce
           </s-button>
           <s-button variant="tertiary" onClick={() => revalidator.revalidate()}>
             Obnovit

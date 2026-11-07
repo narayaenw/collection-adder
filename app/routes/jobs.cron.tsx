@@ -9,6 +9,8 @@ import { getRules } from "../lib/settings.server";
 // collections that changed (the buttons in the app still go through all of them).
 /** Collection sync takes a few minutes; removal needs the fresh list. */
 const REMOVE_DELAY_SECONDS = 15 * 60;
+/** Parents are synced from their subcollections after removal is queued. */
+const SYNC_PARENTS_DELAY_SECONDS = 25 * 60;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (!hasValidJobsSecret(request)) return new Response("Unauthorized", { status: 401 });
@@ -25,6 +27,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if ((await getRules(shop)).removal.nightly) {
       await enqueueJob(shop, "remove-unmatched", { changedOnly: true }, { delaySeconds: REMOVE_DELAY_SECONDS });
     }
+    await enqueueJob(shop, "sync-parents", {}, { delaySeconds: SYNC_PARENTS_DELAY_SECONDS });
   }
   return Response.json({ shops: sessions.length });
 };

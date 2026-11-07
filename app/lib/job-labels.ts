@@ -15,4 +15,6 @@ export const JOB_LABELS: Record<string, string> = {
   "remove-unmatched": "Odebrání nevyhovujících",
   "remove-smart-rules": "Smazání pravidel smart kolekcí",
   "prune-history": "Úklid staré historie",
+  "sync-parents": "Srovnání nadřazených kolekcí",
+  "sync-parent": "Srovnání nadřazené kolekce",
 };
