@@ -20,6 +20,7 @@ Shopify aplikace, která přiřazuje produkty (alu kola) do kolekcí podle pravi
 - **Lokální kopie kolekcí:** aplikace drží metapole všech YMM kolekcí v Postgresu (načtení přes Bulk Operation, aktualizace noční synchronizací a tlačítkem Vyhodnotit kolekci; webhook `collections/update` se ignoruje, protože ho Shopify posílá při každé změně produktu v kolekci, `collections/delete` kolekci odebere). Nový produkt se tak porovná se ~17 000 kolekcemi v paměti bez dotazování Shopify.
 - **Spouštění:**
   - automaticky webhookem `products/create` (s odstupem `PRODUCT_CREATE_DELAY_SECONDS`, výchozí 120 s, aby stihla doběhnout metapole),
+  - automaticky v noční dávce (krok odebírání) pro produkty, které se od minulé noci staly aktivními (např. založené jako koncept a později aktivované),
   - z detailu produktu nebo kolekce v adminu přes *Další akce → Zařadit … podle pravidel*,
   - z přehledu aplikace: vyhodnotit produkt, kolekci, nebo vše.
 - **Fronty:** v produkci Cloud Tasks volá `/jobs/run`, neúspěšné úlohy se opakují. Tři fronty, aby se procesy neblokovaly:

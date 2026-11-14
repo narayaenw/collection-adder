@@ -1,4 +1,5 @@
 import db from "../db.server";
+import { activatedProductIds } from "./rules/activation";
 import {
   checkHash,
   collectionsAffectedByProducts,
@@ -40,7 +41,7 @@ async function exportProductFields(admin: AdminClient, rules: RuleSet): Promise<
  * collection metafields or settings, not checked for a week or so, or holding products whose
  * fields changed since the last pass. Their earlier checks are dropped here, before their jobs
  * are queued. Call `save` once the jobs are queued, so the next pass compares products with what
- * this one saw.
+ * this one saw. Also lists the products activated since the last pass (`activatedIds`).
  */
 export async function planChangedCollections(
   admin: AdminClient,
@@ -69,6 +70,7 @@ export async function planChangedCollections(
       .map((p) => [p.productId, p.fields as FieldMap]),
   );
   let changedProducts = products.length;
+  const activatedIds = activatedProductIds(previous, products);
   if (previous.size > 0) {
     const affected = collectionsAffectedByProducts(kind, rules, collections, previous, products);
     changedProducts = affected.changedProducts;
@@ -113,6 +115,7 @@ export async function planChangedCollections(
     collectionIds,
     unchangedCollections,
     changedProducts,
+    activatedIds,
     save,
   };
 }

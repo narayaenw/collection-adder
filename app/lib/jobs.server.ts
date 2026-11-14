@@ -402,10 +402,16 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     for (const collectionIds of groups) {
       await enqueueJob(shop, "evaluate-group", { collectionIds, runId: jobId, add: false, removal: true, remove });
     }
+    // Products activated since the last night (e.g. created as drafts) join their collections
+    // the same way a newly created product does.
+    for (const productId of plan?.activatedIds ?? []) {
+      await enqueueJob(shop, "evaluate-product", { productId });
+    }
     await plan?.save();
     return `Naplánována kontrola ${ids.length} kolekcí v ${groups.length} skupinách` +
       (remove ? ", nevyhovující produkty se odeberou" : " nanečisto (nic se neodebere)") +
-      (plan ? skippedSummary(plan, collections.length) : ".");
+      (plan ? skippedSummary(plan, collections.length) : ".") +
+      (plan ? ` Aktivovaných produktů k přidání do kolekcí: ${plan.activatedIds.length}.` : "");
   },
 
   async "clean-collection"(shop, payload) {
