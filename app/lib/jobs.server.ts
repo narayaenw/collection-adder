@@ -8,7 +8,7 @@ import {
   syncAllCollections,
   syncCollection,
 } from "./collections.server";
-import { evaluateProduct } from "./evaluate.server";
+import { evaluateProduct, planProductAdditions } from "./evaluate.server";
 import { evaluateGroup, groupBySearch } from "./groups.server";
 import { enqueueJob, JobCancelledError, runInJob, type JobType } from "./queue.server";
 import { createMatcher, isVendorExcluded } from "./rules/engine";
@@ -17,7 +17,7 @@ import { pruneHistory, pruneSummary } from "./prune.server";
 import { cleanCollection, removalSummary } from "./removal.server";
 import { parentCollectionIds, syncParent } from "./parents.server";
 import { getRules } from "./settings.server";
-import { assertNoUserErrors, chunk, forEachBulkRow, gql, type AdminClient } from "./shopify/api.server";
+import { assertNoUserErrors, chunk, forEachBulkRow, gql, withGqlStats, type AdminClient } from "./shopify/api.server";
 import {
   COLLECTION_ADD_PRODUCTS,
   productRowParser,
@@ -43,7 +43,13 @@ async function adminFor(shop: string): Promise<AdminClient> {
 
 async function addProducts(admin: AdminClient, collectionId: string, productIds: string[]) {
   for (const ids of chunk(productIds, 250)) {
-    const data = await gql(admin, COLLECTION_ADD_PRODUCTS, { id: collectionId, productIds: ids });
+    const started = Date.now();
+    const { result: data, stats } = await withGqlStats(() =>
+      gql(admin, COLLECTION_ADD_PRODUCTS, { id: collectionId, productIds: ids }),
+    );
+    console.log(JSON.stringify({
+      addProducts: { collectionId, products: ids.length, ms: Date.now() - started, waitMs: stats.waitMs, cost: stats.cost },
+    }));
     assertNoUserErrors("collectionAddProductsV2", data.collectionAddProductsV2.userErrors);
   }
 }
@@ -164,6 +170,45 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     const result = await evaluateProduct(admin, shop, payload.productId);
     if (!result) return "Produkt nenalezen.";
     return `Odpovídá ${result.matched} kolekcím, nově přidán do ${result.added}.`;
+  },
+
+  /**
+   * A product list evaluated per collection: one planning job, then "add-products" jobs that
+   * add up to 250 products to one collection each.
+   */
+  async "evaluate-products"(shop, payload) {
+    const admin = await adminFor(shop);
+    const productIds = payload.productIds as string[];
+    const plan = await planProductAdditions(admin, shop, productIds);
+    const queued = await queueAdditions(shop, plan.additions);
+    return `Prověřeno ${plan.found} z ${productIds.length} produktů` +
+      (plan.skipped ? ` (${plan.skipped} neaktivních nebo vyloučených)` : "") +
+      `, odpovídají ${plan.matchedPairs} přiřazením. Naplánováno ${queued} nových přiřazení ` +
+      `do ${plan.additions.size} kolekcí.`;
+  },
+
+  /**
+   * Products created since the last batch (collected by the products/create webhook), evaluated
+   * together per collection. Queues itself again while more are waiting.
+   */
+  async "evaluate-pending"(shop) {
+    const takenAt = new Date();
+    const rows = await db.pendingProduct.findMany({
+      where: { shop, createdAt: { lte: takenAt } },
+      orderBy: { createdAt: "asc" },
+      take: 5000,
+      select: { id: true },
+    });
+    if (rows.length === 0) return "Žádné nové produkty k vyhodnocení.";
+    const productIds = rows.map((r) => r.id);
+    const admin = await adminFor(shop);
+    const plan = await planProductAdditions(admin, shop, productIds);
+    const queued = await queueAdditions(shop, plan.additions);
+    // A product created again meanwhile has a newer time and stays for the next batch.
+    await db.pendingProduct.deleteMany({ where: { shop, id: { in: productIds }, createdAt: { lte: takenAt } } });
+    if (await db.pendingProduct.count({ where: { shop } })) await enqueueJob(shop, "evaluate-pending", {});
+    return `Nové produkty: ${productIds.length}, odpovídají ${plan.matchedPairs} přiřazením. ` +
+      `Naplánováno ${queued} nových přiřazení do ${plan.additions.size} kolekcí.`;
   },
 
   async "evaluate-collection"(shop, payload, jobId) {
@@ -404,8 +449,8 @@ const handlers: Record<JobType, (shop: string, payload: Payload, jobId: string) 
     }
     // Products activated since the last night (e.g. created as drafts) join their collections
     // the same way a newly created product does.
-    for (const productId of plan?.activatedIds ?? []) {
-      await enqueueJob(shop, "evaluate-product", { productId });
+    for (const productIds of chunk(plan?.activatedIds ?? [], 5000)) {
+      await enqueueJob(shop, "evaluate-products", { productIds });
     }
     await plan?.save();
     return `Naplánována kontrola ${ids.length} kolekcí v ${groups.length} skupinách` +

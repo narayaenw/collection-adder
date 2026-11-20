@@ -7,6 +7,8 @@ export type JobType =
   | "sync-collections"
   | "sync-collection"
   | "evaluate-product"
+  | "evaluate-products"
+  | "evaluate-pending"
   | "evaluate-collection"
   | "evaluate-collections"
   | "evaluate-group"

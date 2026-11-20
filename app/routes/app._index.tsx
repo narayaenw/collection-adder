@@ -191,7 +191,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (ids.length === 0) return { message: "Seznam neobsahuje žádné platné ID." };
       if (ids.length > MAX_LIST_IDS) return { message: `Najednou nejvýš ${MAX_LIST_IDS} ID.` };
       if (type === "Product") {
-        for (const productId of ids) await enqueueJob(shop, "evaluate-product", { productId }, { manual: true });
+        // Planned in one job and written per collection (up to 250 products a call).
+        await enqueueJob(shop, "evaluate-products", { productIds: ids }, { manual: true });
       } else {
         await enqueueJob(shop, "evaluate-collections", { collectionIds: ids }, { manual: true });
       }

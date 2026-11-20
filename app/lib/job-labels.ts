@@ -3,6 +3,8 @@ export const JOB_LABELS: Record<string, string> = {
   "sync-collections": "Synchronizace kolekcí",
   "sync-collection": "Aktualizace kolekce",
   "evaluate-product": "Vyhodnocení produktu",
+  "evaluate-products": "Vyhodnocení seznamu produktů",
+  "evaluate-pending": "Vyhodnocení nových produktů",
   "evaluate-collection": "Vyhodnocení kolekce",
   "evaluate-collections": "Vyhodnocení seznamu kolekcí",
   "evaluate-all": "Vyhodnocení všeho",
