@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
 import db from "../db.server";
-import { isParentCollection, isRuleCollection } from "./rules/engine";
+import { createMatcher, isParentCollection, isRuleCollection } from "./rules/engine";
 import { SUBCOLLECTION_KEY, type CollectionSnapshot, type FieldMap, type RuleSet } from "./rules/types";
 import { gql, runBulkQuery, type AdminClient } from "./shopify/api.server";
 import { collectionQuery, collectionsBulkQuery, toCollectionSnapshot } from "./shopify/queries";
@@ -99,4 +99,42 @@ export async function countParentCollections(shop: string): Promise<number> {
     WHERE shop = ${shop}
       AND COALESCE(NULLIF(TRIM(fields ->> ${SUBCOLLECTION_KEY}), ''), '[]') <> '[]'`;
   return Number(row?.count ?? 0);
+}
+
+type Matcher = ReturnType<typeof createMatcher>;
+
+/** Per shop: the key the matcher was built for and the (possibly still running) build. */
+const matcherCache = new Map<string, { key: string; build: Promise<{ match: Matcher; count: number }> }>();
+
+/**
+ * Stamp of the shop's local copy: row count and latest sync time. Every write to the copy (full
+ * sync, single upsert, delete) changes it, also when another instance made the write.
+ */
+async function ruleCollectionsVersion(shop: string): Promise<string> {
+  const [row] = await db.$queryRaw<{ count: bigint; latest: Date | null }[]>`
+    SELECT COUNT(*) AS count, MAX("syncedAt") AS latest FROM "RuleCollection" WHERE shop = ${shop}`;
+  return `${row?.count ?? 0}:${row?.latest ? new Date(row.latest).getTime() : 0}`;
+}
+
+/**
+ * Matcher over the rule collections (parents left out), kept in instance memory between jobs and
+ * rebuilt only when the local copy or the rules changed. Product evaluations use it, so each job
+ * does not load the ~19 000 collections again. Jobs running at once share one build.
+ */
+export async function getRuleMatcher(
+  shop: string,
+  rules: RuleSet,
+): Promise<{ match: Matcher; count: number; cached: boolean }> {
+  const key = `${await ruleCollectionsVersion(shop)}|${JSON.stringify(rules)}`;
+  const entry = matcherCache.get(shop);
+  if (entry && entry.key === key) return { ...(await entry.build), cached: true };
+  const build = loadRuleCollections(shop).then((collections) => ({
+    match: createMatcher(collections, rules),
+    count: collections.length,
+  }));
+  matcherCache.set(shop, { key, build });
+  build.catch(() => {
+    if (matcherCache.get(shop)?.build === build) matcherCache.delete(shop);
+  });
+  return { ...(await build), cached: false };
 }
