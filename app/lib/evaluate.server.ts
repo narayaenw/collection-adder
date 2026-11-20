@@ -93,3 +93,60 @@ export async function evaluateProduct(admin: AdminClient, shop: string, productI
   log({ matched: matched.length, current: current.size, added: toJoin.length });
   return { matched: matched.length, added: toJoin.length };
 }
+
+/** Products read at once while planning a list evaluation; the shared cost bucket paces them. */
+const PLAN_CONCURRENCY = 8;
+
+/**
+ * Plans a product list evaluation per collection: reads each product and its current collections,
+ * matches it and returns, per collection, the products to add. Writing per collection
+ * (collectionAddProductsV2, up to 250 products a call) replaces one productUpdate per product,
+ * which costs about 50 ms for every collection joined.
+ */
+export async function planProductAdditions(admin: AdminClient, shop: string, productIds: string[]) {
+  const started = Date.now();
+  const rules = await getRules(shop);
+  const matcher = await getRuleMatcher(shop, rules);
+  const additions = new Map<string, string[]>();
+  let found = 0;
+  let skipped = 0;
+  let matchedPairs = 0;
+  let next = 0;
+
+  const worker = async () => {
+    while (next < productIds.length) {
+      const productId = productIds[next++];
+      const data = await gql(admin, productQuery(rules), { id: productId });
+      if (!data.product) continue;
+      found++;
+      const product = toProductSnapshot(data.product, rules);
+      if (isVendorExcluded(product, rules) || !hasIncludedStatus(product)) {
+        skipped++;
+        continue;
+      }
+      const matched = matcher.match(product);
+      matchedPairs += matched.length;
+      if (matched.length === 0) continue;
+      const current = await currentCollectionIds(admin, productId);
+      for (const collectionId of matched) {
+        if (current.has(collectionId)) continue;
+        const list = additions.get(collectionId);
+        if (list) list.push(productId);
+        else additions.set(collectionId, [productId]);
+      }
+    }
+  };
+  const { stats } = await withGqlStats(() =>
+    Promise.all(Array.from({ length: PLAN_CONCURRENCY }, worker)),
+  );
+
+  let pairs = 0;
+  for (const list of additions.values()) pairs += list.length;
+  console.log(JSON.stringify({
+    planProductAdditions: {
+      products: productIds.length, found, skipped, matchedPairs, pairs, collections: additions.size,
+      totalMs: Date.now() - started, cached: matcher.cached, waitMs: stats.waitMs, calls: stats.calls,
+    },
+  }));
+  return { additions, found, skipped, matchedPairs, pairs };
+}

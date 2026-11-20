@@ -46,6 +46,15 @@ model RuleCollection {
   @@index([shop])
 }
 
+/** Products created since the last batch evaluation (products/create webhook). */
+model PendingProduct {
+  id        String   @id
+  shop      String
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+}
+
 model Job {
   id        String   @id @default(cuid())
   shop      String
