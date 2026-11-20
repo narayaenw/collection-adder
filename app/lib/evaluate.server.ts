@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
-import { loadRuleCollections } from "./collections.server";
-import { createMatcher, isVendorExcluded } from "./rules/engine";
+import { getRuleMatcher } from "./collections.server";
+import { isVendorExcluded } from "./rules/engine";
 import { hasIncludedStatus } from "./rules/types";
 import { getRules } from "./settings.server";
-import { assertNoUserErrors, chunk, gql, type AdminClient } from "./shopify/api.server";
+import { assertNoUserErrors, chunk, gql, withGqlStats, type AdminClient, type GqlStats } from "./shopify/api.server";
 import {
   PRODUCT_COLLECTIONS_QUERY,
   PRODUCT_JOIN_COLLECTIONS,
@@ -24,28 +24,72 @@ async function currentCollectionIds(admin: AdminClient, productId: string) {
   return ids;
 }
 
+/** Milliseconds of one step; Shopify steps also carry their bucket waits and query cost. */
+type Step = { ms: number; waitMs?: number; cost?: number; calls?: number; ids?: number };
+
+function shopifyStep(started: number, stats: GqlStats): Step {
+  return { ms: Date.now() - started, waitMs: stats.waitMs, cost: stats.cost, calls: stats.calls };
+}
+
 /**
- * Matches one product against all rule collections (from the local copy) and joins the
- * collections it is not in yet. Fast enough to run straight from the admin.
+ * Matches one product against all rule collections (from the local copy, cached in memory) and
+ * joins the collections it is not in yet. Each step is timed and logged, so slow runs show where
+ * the time goes.
  */
 export async function evaluateProduct(admin: AdminClient, shop: string, productId: string) {
+  const started = Date.now();
+  const steps: Record<string, Step | Step[] | boolean | number> = {};
+  const log = (result: Record<string, unknown>) =>
+    console.log(JSON.stringify({
+      evaluateProduct: { productId, totalMs: Date.now() - started, ...result, steps },
+    }));
+
+  let t = Date.now();
   const rules = await getRules(shop);
-  const data = await gql(admin, productQuery(rules), { id: productId });
-  if (!data.product) return null;
+  steps.rules = { ms: Date.now() - t };
+
+  t = Date.now();
+  const read = await withGqlStats(() => gql(admin, productQuery(rules), { id: productId }));
+  steps.product = shopifyStep(t, read.stats);
+  const data = read.result;
+  if (!data.product) {
+    log({ found: false });
+    return null;
+  }
 
   const product = toProductSnapshot(data.product, rules);
   // Drafts, archived and unlisted products stay out of rule collections.
-  if (isVendorExcluded(product, rules) || !hasIncludedStatus(product)) return { matched: 0, added: 0 };
-  const collections = await loadRuleCollections(shop);
-  const matched = createMatcher(collections, rules)(product);
-  const current = await currentCollectionIds(admin, productId);
+  if (isVendorExcluded(product, rules) || !hasIncludedStatus(product)) {
+    log({ skipped: true });
+    return { matched: 0, added: 0 };
+  }
+
+  t = Date.now();
+  const matcher = await getRuleMatcher(shop, rules);
+  steps.collections = { ms: Date.now() - t };
+  steps.cached = matcher.cached;
+  steps.collectionCount = matcher.count;
+
+  t = Date.now();
+  const matched = matcher.match(product);
+  steps.match = { ms: Date.now() - t };
+
+  t = Date.now();
+  const listed = await withGqlStats(() => currentCollectionIds(admin, productId));
+  steps.current = shopifyStep(t, listed.stats);
+  const current = listed.result;
   const toJoin = matched.filter((id) => !current.has(id));
 
+  const joins: Step[] = [];
+  steps.joins = joins;
   for (const ids of chunk(toJoin, 250)) {
-    const result = await gql(admin, PRODUCT_JOIN_COLLECTIONS, {
-      product: { id: productId, collectionsToJoin: ids },
-    });
-    assertNoUserErrors("productUpdate", result.productUpdate.userErrors);
+    t = Date.now();
+    const joined = await withGqlStats(() =>
+      gql(admin, PRODUCT_JOIN_COLLECTIONS, { product: { id: productId, collectionsToJoin: ids } }),
+    );
+    joins.push({ ...shopifyStep(t, joined.stats), ids: ids.length });
+    assertNoUserErrors("productUpdate", joined.result.productUpdate.userErrors);
   }
+  log({ matched: matched.length, current: current.size, added: toJoin.length });
   return { matched: matched.length, added: toJoin.length };
 }

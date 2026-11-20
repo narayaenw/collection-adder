@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shopify GraphQL responses are untyped JSON. */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { CostBucket, costOf, type QueryCost } from "./throttle";
 
 /** Minimal shape of the admin GraphQL client, so jobs and routes can share helpers. */
@@ -15,6 +16,22 @@ function isThrottled(error: unknown): boolean {
   const e = error as { message?: string; body?: unknown; response?: { code?: number } };
   const text = `${e?.message ?? ""} ${JSON.stringify(e?.body ?? "")}`;
   return /throttled/i.test(text) || e?.response?.code === 429;
+}
+
+/** Time spent waiting for the cost bucket (or after throttling) and query cost, per measured block. */
+export interface GqlStats {
+  calls: number;
+  waitMs: number;
+  cost: number;
+}
+
+const statsStore = new AsyncLocalStorage<GqlStats>();
+
+/** Runs `fn` and returns its result with the GraphQL waits and costs of the calls made inside it. */
+export async function withGqlStats<T>(fn: () => Promise<T>): Promise<{ result: T; stats: GqlStats }> {
+  const stats: GqlStats = { calls: 0, waitMs: 0, cost: 0 };
+  const result = await statsStore.run(stats, fn);
+  return { result, stats };
 }
 
 /** One shop per app instance, so jobs share one estimate of its cost bucket. */
@@ -42,14 +59,20 @@ export async function gql<T = any>(
   variables?: Record<string, unknown>,
 ): Promise<T> {
   const started = Date.now();
+  const stats = statsStore.getStore();
+  const wait = async (ms: number) => {
+    if (stats) stats.waitMs += ms;
+    await sleep(ms);
+  };
   const retryThrottled = async (error: unknown, cost: QueryCost | undefined, attempt: number) => {
     if (!isThrottled(error) || Date.now() - started > THROTTLE_BUDGET_MS) return false;
-    await sleep(throttleWait(cost, attempt));
+    await wait(throttleWait(cost, attempt));
     return true;
   };
   for (let attempt = 1; ; attempt++) {
     const { waitMs, cost: reserved } = bucket.reserve(query);
-    if (waitMs > 0) await sleep(waitMs);
+    if (waitMs > 0) await wait(waitMs);
+    if (stats) stats.calls++;
     let json: { data?: T; errors?: unknown };
     try {
       const response = await admin.graphql(query, { variables });
@@ -62,6 +85,7 @@ export async function gql<T = any>(
     }
     const cost = costOf(json);
     bucket.record(query, cost, reserved);
+    if (stats) stats.cost += cost?.actualQueryCost ?? cost?.requestedQueryCost ?? 0;
     if (!json.errors) return json.data as T;
     const error = new Error(`GraphQL error: ${JSON.stringify(json.errors)}`);
     if (await retryThrottled(error, cost, attempt)) continue;
